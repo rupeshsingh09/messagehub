@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "755931328140",
+    "project_id": "messagehub-personal",
+    "storage_bucket": "messagehub-personal.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:755931328140:android:3a28c477c9feab2c4f15a9",
+        "android_client_info": {
+          "package_name": "com.example.messagehub"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAwBfx9fezK_4tZWYqThPvTxS3BtgNFDAg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
