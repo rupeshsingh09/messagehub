@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../services/theme_provider.dart';
-import '../widgets/user_tile.dart';
 import 'chat_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
@@ -13,24 +12,28 @@ class ChatListScreen extends StatefulWidget {
 }
 
 class _ChatListScreenState extends State<ChatListScreen> {
+  bool _isLoaded = false;
+
   @override
-  void initState() {
-    super.initState();
-    _loadUsers();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    if (!_isLoaded) {
+      _isLoaded = true;
+      _loadUsers();
+    }
   }
 
-  void _loadUsers() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<ChatProvider>().fetchUsers();
-    });
+  Future<void> _loadUsers() async {
+    await context.read<ChatProvider>().fetchContactsAndMatch();
   }
 
   void _showLogoutDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
+        content: const Text('Do you want to logout?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -38,10 +41,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
           ),
           TextButton(
             onPressed: () async {
-              Navigator.pop(context); // Close dialog
+              Navigator.pop(context);
               await context.read<ChatProvider>().logout();
               if (mounted) {
-                Navigator.pushNamedAndRemoveUntil(context, '/auth', (route) => false);
+                Navigator.pushNamedAndRemoveUntil(
+                    context, '/auth', (route) => false);
               }
             },
             child: const Text('Logout', style: TextStyle(color: Colors.red)),
@@ -57,95 +61,129 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('MessageHub', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('MessageHub'),
         actions: [
           IconButton(
-            icon: Icon(themeProvider.isDarkMode ? Icons.light_mode : Icons.dark_mode),
+            icon: Icon(themeProvider.isDarkMode
+                ? Icons.light_mode
+                : Icons.dark_mode),
             onPressed: () => themeProvider.toggleTheme(),
           ),
-          IconButton(icon: const Icon(Icons.search), onPressed: () {}),
-          PopupMenuButton<String>(
+          PopupMenuButton(
             onSelected: (value) {
-              if (value == 'logout') {
-                _showLogoutDialog(context);
-              }
+              if (value == 'logout') _showLogoutDialog(context);
             },
-            itemBuilder: (BuildContext context) => [
-              const PopupMenuItem<String>(
+            itemBuilder: (_) => const [
+              PopupMenuItem(
                 value: 'logout',
-                child: Row(
-                  children: [
-                    Icon(Icons.logout, color: Colors.red),
-                    SizedBox(width: 8),
-                    Text('Logout', style: TextStyle(color: Colors.red)),
-                  ],
-                ),
-              ),
+                child: Text('Logout', style: TextStyle(color: Colors.red)),
+              )
             ],
           ),
         ],
       ),
+
+      // ===========================
+      // 📱 BODY
+      // ===========================
       body: Consumer<ChatProvider>(
-        builder: (context, chatProvider, child) {
-          if (chatProvider.isLoading && chatProvider.users.isEmpty) {
+        builder: (context, provider, _) {
+          if (provider.isLoading && provider.users.isEmpty) {
             return const Center(child: CircularProgressIndicator());
           }
-          
-          if (chatProvider.error != null && chatProvider.users.isEmpty) {
+
+          if (provider.error != null && provider.users.isEmpty) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                  const SizedBox(height: 16),
-                  Text(chatProvider.error!, style: const TextStyle(color: Colors.red)),
-                  const SizedBox(height: 16),
+                  const Icon(Icons.error, color: Colors.red, size: 50),
+                  const SizedBox(height: 10),
+                  Text(provider.error!),
+                  const SizedBox(height: 10),
                   ElevatedButton(
                     onPressed: _loadUsers,
                     child: const Text('Retry'),
-                  ),
+                  )
                 ],
               ),
             );
           }
-          
-          final users = chatProvider.users;
 
-          if (users.isEmpty) {
+          if (provider.users.isEmpty) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey[400]),
+                  Icon(Icons.person_off, size: 80, color: Colors.grey),
                   const SizedBox(height: 16),
-                  Text(
-                    'No chats yet',
-                    style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                  const Text(
+                    'No contacts using MessageHub',
+                    style: TextStyle(fontSize: 18, color: Colors.grey, fontWeight: FontWeight.w500),
                   ),
-                  const SizedBox(height: 8),
-                  ElevatedButton(
+                  const SizedBox(height: 20),
+                  ElevatedButton.icon(
                     onPressed: _loadUsers,
-                    child: const Text('Refresh'),
-                  ),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Sync Contacts'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                  )
                 ],
               ),
             );
           }
 
           return RefreshIndicator(
-            onRefresh: () async => chatProvider.fetchUsers(),
+            onRefresh: _loadUsers,
             child: ListView.separated(
-              itemCount: users.length,
-              separatorBuilder: (context, index) => const Divider(height: 1, indent: 70),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              itemCount: provider.users.length,
+              separatorBuilder: (_, __) => const Divider(indent: 80, height: 1),
               itemBuilder: (context, index) {
-                final user = users[index];
-                return UserTile(
-                  user: user,
+                final user = provider.users[index];
+
+                return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+                  leading: CircleAvatar(
+                    radius: 28,
+                    backgroundColor: Colors.blue.shade50,
+                    backgroundImage: user.profilePic != null &&
+                        user.profilePic!.isNotEmpty
+                        ? NetworkImage(user.profilePic!)
+                        : null,
+                    child: user.profilePic == null ||
+                        user.profilePic!.isEmpty
+                        ? Icon(Icons.person, color: Colors.blue.shade300, size: 30)
+                        : null,
+                  ),
+
+                  title: Text(
+                    user.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(user.phone, style: TextStyle(color: Colors.grey.shade600)),
+                      const Text(
+                        'Tap to chat',
+                        style: TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+
                   onTap: () {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => ChatScreen(user: user),
+                        builder: (_) => ChatScreen(user: user),
                       ),
                     );
                   },
@@ -155,9 +193,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
           );
         },
       ),
+
+      // ===========================
+      // ➕ FAB (Optional)
+      // ===========================
       floatingActionButton: FloatingActionButton(
-        onPressed: () {},
-        child: const Icon(Icons.chat),
+        onPressed: _loadUsers,
+        child: const Icon(Icons.refresh),
       ),
     );
   }

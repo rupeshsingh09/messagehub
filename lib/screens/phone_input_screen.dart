@@ -22,7 +22,7 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
 
     final phone = _phoneController.text.trim();
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-    
+
     final success = await chatProvider.sendOtp(phone);
 
     setState(() => _isLoading = false);
@@ -32,7 +32,7 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => OtpScreen(phoneNumber: phone),
+            builder: (context) => OtpScreen(phone: phone),
           ),
         );
       }
@@ -74,7 +74,8 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
           child: Column(
             children: [
               const SizedBox(height: 50),
-              // Icon/Logo Area
+
+              // 🔹 Logo/Icon
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
@@ -87,7 +88,9 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
                   color: Colors.white,
                 ),
               ),
+
               const SizedBox(height: 30),
+
               const Text(
                 'Verification',
                 style: TextStyle(
@@ -97,7 +100,9 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
                   letterSpacing: 1.2,
                 ),
               ),
+
               const SizedBox(height: 10),
+
               const Text(
                 'Enter your number to receive an OTP',
                 style: TextStyle(
@@ -105,9 +110,10 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
                   color: Colors.white70,
                 ),
               ),
+
               const SizedBox(height: 50),
-              
-              // Input Card
+
+              // 🔹 Bottom Card
               Expanded(
                 child: Container(
                   width: double.infinity,
@@ -133,7 +139,9 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
                               color: Colors.black87,
                             ),
                           ),
+
                           const SizedBox(height: 12),
+
                           TextFormField(
                             controller: _phoneController,
                             keyboardType: TextInputType.phone,
@@ -151,7 +159,10 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(15),
-                                borderSide: const BorderSide(color: Colors.green, width: 2),
+                                borderSide: const BorderSide(
+                                  color: Colors.green,
+                                  width: 2,
+                                ),
                               ),
                             ),
                             validator: (value) {
@@ -167,7 +178,9 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
                               return null;
                             },
                           ),
+
                           const SizedBox(height: 40),
+
                           SizedBox(
                             width: double.infinity,
                             height: 55,
@@ -185,15 +198,17 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
                               child: _isLoading
                                   ? const CircularProgressIndicator(color: Colors.white)
                                   : const Text(
-                                      'Send OTP',
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
+                                'Send OTP',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ),
                           ),
+
                           const SizedBox(height: 20),
+
                           Center(
                             child: Text(
                               'By continuing, you agree to our Terms & Conditions',

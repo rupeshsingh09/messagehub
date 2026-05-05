@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import '../models/user_model.dart';
 import '../models/message_model.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
 import 'api_service.dart';
 import 'socket_service.dart';
 import 'storage_service.dart';
+import 'contact_service.dart';
 
 class ChatProvider with ChangeNotifier {
   ChatUser? _currentUser;
@@ -13,35 +15,48 @@ class ChatProvider with ChangeNotifier {
   String? _error;
   bool _isPartnerTyping = false;
   String? _activeChatPartnerId;
+  String? _token;
 
   ChatUser? get currentUser => _currentUser;
+  String? get token => _token;
   List<ChatUser> get users => _users;
   List<Message> get messages => _messages;
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get isPartnerTyping => _isPartnerTyping;
 
-  void setCurrentUser(ChatUser user) {
+  // ===========================
+  // 👤 USER SETUP
+  // ===========================
+
+  /// Call this after OTP verified — saves to SharedPreferences and connects socket.
+  void setCurrentUser(ChatUser user, String? token) {
     _currentUser = user;
-    StorageService.saveUser(user);
+    _token = token;
+    StorageService.saveUser(user, token);
     SocketService.instance.connect();
     SocketService.instance.joinRoom(user.id);
     notifyListeners();
   }
 
+  /// Loads user from SharedPreferences on app start (called by SplashScreen indirectly).
   Future<void> loadUserLocally() async {
     final user = await StorageService.getUser();
+    final token = await StorageService.getToken();
     if (user != null) {
       _currentUser = user;
+      _token = token;
       SocketService.instance.connect();
-      SocketService.instance.joinRoom(_currentUser!.id);
+      SocketService.instance.joinRoom(user.id);
       notifyListeners();
     }
   }
 
+  /// Clears all user data, disconnects socket, and navigates to signup.
   Future<void> logout() async {
     await StorageService.logout();
     _currentUser = null;
+    _token = null;
     _users = [];
     _messages = [];
     _error = null;
@@ -51,65 +66,55 @@ class ChatProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  // ===========================
+  // 🔐 OTP AUTH FLOW
+  // ===========================
+
+  /// Step 1: Call /send-otp API — triggers OTP delivery.
   Future<bool> sendOtp(String phone) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
-    final success = await ApiService.sendOtp(phone);
-    _isLoading = false;
-    notifyListeners();
-    return success;
-  }
+    final result = await ApiService.sendOtp(phone);
 
-  Future<bool> verifyOtp(String phone, String otp) async {
-    _isLoading = true;
-    _error = null;
-    notifyListeners();
-
-    final user = await ApiService.verifyOtp(phone, otp);
     _isLoading = false;
 
-    if (user != null) {
-      _currentUser = user;
-      StorageService.saveUser(user);
-      SocketService.instance.connect();
-      SocketService.instance.joinRoom(user.id);
+    if (result['success'] == true) {
       notifyListeners();
       return true;
     }
 
-    _error = 'Invalid OTP';
+    _error = result['message'] as String?;
     notifyListeners();
     return false;
   }
 
-  // Requirement: Add register method using ApiService.registerUser
-  Future<bool> register(String name, String phone) async {
+  /// Step 2: Call /verify-otp API — on success saves user & routes to home.
+  Future<bool> loginWithOtp(String phone, String otp, String firstName) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
-    try {
-      final user = await ApiService.registerUser(name, phone);
-      _isLoading = false;
+    final result = await ApiService.verifyOtp(phone, otp, firstName);
 
-      if (user != null) {
-        _currentUser = user;
-        StorageService.saveUser(user);
-        SocketService.instance.connect();
-        SocketService.instance.joinRoom(user.id);
-        notifyListeners();
-        return true;
-      }
-    } catch (e) {
-      _error = 'Registration failed: $e';
-    }
-    
     _isLoading = false;
+
+    if (result['success'] == true) {
+      final ChatUser user = result['user'] as ChatUser;
+      final String? token = result['token'] as String?;
+      setCurrentUser(user, token); // saves to SharedPreferences + connects socket
+      return true;
+    }
+
+    _error = result['message'] as String?;
     notifyListeners();
     return false;
   }
+
+  // ===========================
+  // 👥 USERS / CONTACTS
+  // ===========================
 
   Future<void> fetchUsers() async {
     _isLoading = true;
@@ -117,46 +122,95 @@ class ChatProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      final allUsers = await ApiService.getUsers();
-      
+      final List<dynamic> usersData = await ApiService.getUsers();
+
+      if (usersData.isEmpty) {
+        _users = [];
+        print('[ChatProvider] No users found on server');
+        return;
+      }
+
       final Map<String, ChatUser> uniqueUsers = {};
-      for (var user in allUsers) {
+      for (var data in usersData) {
+        final user = ChatUser.fromJson(data);
         if (_currentUser != null && user.id == _currentUser!.id) continue;
         uniqueUsers[user.id] = user;
       }
-      
+
       _users = uniqueUsers.values.toList();
+      print('[ChatProvider] Successfully fetched ${_users.length} users');
     } catch (e) {
-      _error = 'Failed to load users';
+      print('[ChatProvider] Error fetching users: $e');
+      _error = 'Failed to load users: $e';
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
+  // ===========================
+  // 👥 USERS / CONTACTS
+  // ===========================
+
+  /// Fetches device contacts, cleans them, and matches them with backend users.
+  Future<void> fetchContactsAndMatch() async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      // 1. Get cleaned numbers from device
+      final List<String> phoneNumbers = await ContactService.getDevicePhoneNumbers();
+
+      if (phoneNumbers.isEmpty) {
+        _users = [];
+        _error = 'No contacts found on device';
+        print('[ChatProvider] No device contacts to match');
+        return;
+      }
+
+      // 2. Send to backend to find matched users
+      // Requirement: Assign exactly like this
+      final List<dynamic> matchedUsers = await ApiService.matchContacts(phoneNumbers);
+
+      // 3. Handle empty state and convert to ChatUser objects
+      if (matchedUsers.isEmpty) {
+        _users = [];
+        print('[ChatProvider] No matching users found for contacts');
+      } else {
+        _users = matchedUsers
+            .map((data) => ChatUser.fromJson(data))
+            .where((user) => _currentUser == null || user.id != _currentUser!.id)
+            .toList();
+      }
+      
+      print('[ChatProvider] Matched ${_users.length} contacts');
+    } catch (e) {
+      print('[ChatProvider] Error in fetchContactsAndMatch: $e');
+      _error = e.toString().contains('denied') 
+          ? 'Contacts permission denied. Please enable in settings.' 
+          : 'Failed to match contacts: $e';
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  // ===========================
+  // 💬 MESSAGES
+  // ===========================
+
   Future<void> fetchMessages(String receiverId) async {
     if (_currentUser == null) return;
+
     _activeChatPartnerId = receiverId;
     _isLoading = true;
     notifyListeners();
 
     try {
-      _messages = await ApiService.getMessages(_currentUser!.id, receiverId);
+      _messages =
+          await ApiService.getMessages(_currentUser!.id, receiverId);
       _listenForIncomingMessages();
-
-      final userIndex = _users.indexWhere((u) => u.id == receiverId);
-      if (userIndex != -1) {
-        final user = _users[userIndex];
-        _users[userIndex] = ChatUser(
-          id: user.id,
-          name: user.name,
-          phone: user.phone,
-          lastMessage: user.lastMessage,
-          lastMessageTime: user.lastMessageTime,
-          profilePic: user.profilePic,
-          unreadCount: 0,
-        );
-      }
     } catch (e) {
       _error = 'Failed to load messages';
     } finally {
@@ -167,129 +221,60 @@ class ChatProvider with ChangeNotifier {
 
   void _listenForIncomingMessages() {
     SocketService.instance.offChatEvents();
+
     SocketService.instance.onReceiveMessage((data) {
       final senderId = data['senderId'] ?? data['sender'];
       final receiverId = data['receiverId'] ?? data['receiver'];
-      
-      if (senderId == _activeChatPartnerId && receiverId == _currentUser?.id) {
-        final newMessage = Message(
-          senderId: senderId,
-          receiverId: receiverId,
-          text: data['message'] ?? '',
-          imageUrl: data['imageUrl'],
-          timestamp: DateTime.now(),
-          isMe: false,
-        );
-        _messages.add(newMessage);
-        notifyListeners();
-      }
-      
-      final userIndex = _users.indexWhere((u) => u.id == senderId);
-      if (userIndex != -1) {
-        final user = _users[userIndex];
-        _users[userIndex] = ChatUser(
-          id: user.id,
-          name: user.name,
-          phone: user.phone,
-          lastMessage: data['message'],
-          lastMessageTime: DateTime.now(),
-          profilePic: user.profilePic,
-          unreadCount: senderId == _activeChatPartnerId ? 0 : user.unreadCount + 1,
+
+      if (senderId == _activeChatPartnerId &&
+          receiverId == _currentUser?.id) {
+        _messages.add(
+          Message(
+            senderId: senderId,
+            receiverId: receiverId,
+            text: data['message'] ?? '',
+            imageUrl: data['imageUrl'],
+            timestamp: DateTime.now(),
+            isMe: false,
+          ),
         );
         notifyListeners();
       }
     });
-
-    SocketService.instance.onTypingStatus(
-      onTyping: (data) {
-        if (data['senderId'] == _activeChatPartnerId) {
-          _isPartnerTyping = true;
-          notifyListeners();
-        }
-      },
-      onStopTyping: (data) {
-        if (data['senderId'] == _activeChatPartnerId) {
-          _isPartnerTyping = false;
-          notifyListeners();
-        }
-      },
-    );
   }
 
-  Future<void> sendMessage(String receiverId, String text, {String? imageUrl}) async {
+  Future<void> sendMessage(String receiverId, String text,
+      {String? imageUrl}) async {
     if (_currentUser == null) return;
 
-    try {
-      final newMessage = Message(
-        senderId: _currentUser!.id,
-        receiverId: receiverId,
-        text: text,
-        imageUrl: imageUrl,
-        timestamp: DateTime.now(),
-        isMe: true,
-      );
-      _messages.add(newMessage);
-      notifyListeners();
-
-      // API call to persist
-      final success = await ApiService.sendMessage(
-        sender: _currentUser!.id,
-        receiver: receiverId,
-        message: text,
-        imageUrl: imageUrl,
-      );
-      
-      if (!success) {
-        print('[ChatProvider] API send failed');
-      }
-
-      // Socket call for real-time
-      SocketService.instance.sendMessage(
-        senderId: _currentUser!.id,
-        receiverId: receiverId,
-        message: text,
-        imageUrl: imageUrl,
-      );
-
-      // Update last message in local list
-      final userIndex = _users.indexWhere((u) => u.id == receiverId);
-      if (userIndex != -1) {
-        final user = _users[userIndex];
-        _users[userIndex] = ChatUser(
-          id: user.id,
-          name: user.name,
-          phone: user.phone,
-          lastMessage: text.isNotEmpty ? text : (imageUrl != null ? 'Photo' : ''),
-          lastMessageTime: DateTime.now(),
-          profilePic: user.profilePic,
-          unreadCount: 0,
-        );
-        notifyListeners();
-      }
-    } catch (e) {
-      print('[ChatProvider] Error in sendMessage: $e');
-    }
-  }
-
-  // Requirement: Add sendImageMessage(receiverId, imageUrl)
-  Future<void> sendImageMessage(String receiverId, String imageUrl) async {
-    await sendMessage(receiverId, '', imageUrl: imageUrl);
-  }
-
-  void setTypingStatus(String receiverId, bool isTyping) {
-    if (_currentUser == null) return;
-    SocketService.instance.sendTypingStatus(
+    final newMessage = Message(
       senderId: _currentUser!.id,
       receiverId: receiverId,
-      isTyping: isTyping,
+      text: text,
+      imageUrl: imageUrl,
+      timestamp: DateTime.now(),
+      isMe: true,
+    );
+
+    _messages.add(newMessage);
+    notifyListeners();
+
+    await ApiService.sendMessage(
+      sender: _currentUser!.id,
+      receiver: receiverId,
+      message: text,
+      imageUrl: imageUrl,
+    );
+
+    SocketService.instance.sendMessage(
+      senderId: _currentUser!.id,
+      receiverId: receiverId,
+      message: text,
+      imageUrl: imageUrl,
     );
   }
 
-  void clearActiveChat() {
-    _activeChatPartnerId = null;
-    _messages = [];
-    _isPartnerTyping = false;
-    SocketService.instance.offChatEvents();
-    notifyListeners();
+  Future<void> sendImageMessage(String receiverId, String imageUrl) async {
+    await sendMessage(receiverId, '', imageUrl: imageUrl);
   }
 }

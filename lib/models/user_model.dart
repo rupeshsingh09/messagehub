@@ -20,7 +20,7 @@ class ChatUser {
   factory ChatUser.fromJson(Map<String, dynamic> json) {
     return ChatUser(
       id: json['_id'] ?? json['id'] ?? '',
-      name: json['name'] ?? '',
+      name: json['name'] ?? '${json['firstName'] ?? ''} ${json['lastName'] ?? ''}'.trim(),
       phone: json['phone'] ?? '',
       lastMessage: json['lastMessage'],
       lastMessageTime: json['lastMessageTime'] != null 

@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:pinput/pinput.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 
 class OtpScreen extends StatefulWidget {
-  final String phoneNumber;
-  const OtpScreen({super.key, required this.phoneNumber});
+  final String phone;
+  final String firstName;
+
+  const OtpScreen({super.key, required this.phone, this.firstName = ''});
 
   @override
   State<OtpScreen> createState() => _OtpScreenState();
@@ -14,70 +17,100 @@ class OtpScreen extends StatefulWidget {
 
 class _OtpScreenState extends State<OtpScreen> {
   final _otpController = TextEditingController();
-  bool _isLoading = false;
+  final _focusNode = FocusNode();
+
+
   int _timerSeconds = 30;
   Timer? _timer;
+
+  bool get _isOtpComplete => _otpController.text.length == 6;
 
   @override
   void initState() {
     super.initState();
     _startTimer();
+    _otpController.addListener(() => setState(() {}));
   }
 
   void _startTimer() {
-    _timerSeconds = 30;
+    _timer?.cancel();
+    setState(() => _timerSeconds = 30);
+
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
       if (_timerSeconds == 0) {
-        setState(() {
-          _timer?.cancel();
-        });
+        timer.cancel();
       } else {
-        setState(() {
-          _timerSeconds--;
-        });
+        setState(() => _timerSeconds--);
       }
     });
   }
 
   Future<void> _verifyOtp() async {
-    if (_otpController.text.length != 6) return;
-
-    setState(() => _isLoading = true);
+    if (!_isOtpComplete) return;
+    _focusNode.unfocus();
 
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-    final success = await chatProvider.verifyOtp(widget.phoneNumber, _otpController.text);
+    final success = await chatProvider.loginWithOtp(
+      widget.phone, 
+      _otpController.text, 
+      widget.firstName,
+    );
 
-    setState(() => _isLoading = false);
+    if (!mounted) return;
 
     if (success) {
-      if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
-      }
+      Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
     } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(chatProvider.error ?? 'Invalid OTP. Please try again.'),
-            backgroundColor: Colors.redAccent,
+      _otpController.clear();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            chatProvider.error ?? 'Invalid OTP. Please try again.',
+            style: GoogleFonts.poppins(),
           ),
-        );
-      }
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          margin: const EdgeInsets.all(16),
+        ),
+      );
     }
   }
 
   Future<void> _resendOtp() async {
-    setState(() => _isLoading = true);
+    if (_timerSeconds > 0) return;
+
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-    final success = await chatProvider.sendOtp(widget.phoneNumber);
-    setState(() => _isLoading = false);
+    final success = await chatProvider.sendOtp(widget.phone);
+
+    if (!mounted) return;
 
     if (success) {
+      _otpController.clear();
       _startTimer();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('OTP Resent Successfully')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('OTP resent successfully!', style: GoogleFonts.poppins()),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          margin: const EdgeInsets.all(16),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(chatProvider.error ?? 'Failed to resend OTP.', style: GoogleFonts.poppins()),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          margin: const EdgeInsets.all(16),
+        ),
+      );
     }
   }
 
@@ -85,138 +118,215 @@ class _OtpScreenState extends State<OtpScreen> {
   void dispose() {
     _timer?.cancel();
     _otpController.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final chatProvider = context.watch<ChatProvider>();
+    final isLoading = chatProvider.isLoading;
+
+    // Pinput theme
     final defaultPinTheme = PinTheme(
-      width: 50,
+      width: 52,
       height: 60,
-      textStyle: const TextStyle(
+      textStyle: GoogleFonts.poppins(
         fontSize: 22,
-        color: Colors.black,
         fontWeight: FontWeight.bold,
+        color: const Color(0xFF1A1A1A),
       ),
       decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade300),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade300, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
     );
 
     final focusedPinTheme = defaultPinTheme.copyWith(
-      decoration: defaultPinTheme.decoration!.copyWith(
-        border: Border.all(color: Colors.green, width: 2),
+      decoration: BoxDecoration(
         color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.blue, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.blue.withOpacity(0.15),
+            blurRadius: 12,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+    );
+
+    final submittedPinTheme = defaultPinTheme.copyWith(
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.blue.shade300, width: 1.5),
       ),
     );
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.black),
+          icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF1A1A1A)),
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 30),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            const SizedBox(height: 40),
-            Text(
-              'OTP Verification',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: Colors.green.shade800,
-              ),
-            ),
-            const SizedBox(height: 15),
-            RichText(
-              textAlign: TextAlign.center,
-              text: TextSpan(
-                style: const TextStyle(fontSize: 16, color: Colors.black54),
-                children: [
-                  const TextSpan(text: 'We have sent a 6-digit code to\n'),
-                  TextSpan(
-                    text: '+91 ${widget.phoneNumber}',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 50),
-            
-            // Pinput Code
-            Pinput(
-              length: 6,
-              controller: _otpController,
-              defaultPinTheme: defaultPinTheme,
-              focusedPinTheme: focusedPinTheme,
-              onCompleted: (pin) => _verifyOtp(),
-            ),
-            
-            const SizedBox(height: 40),
-            
-            _isLoading
-                ? const CircularProgressIndicator()
-                : SizedBox(
-                    width: double.infinity,
-                    height: 55,
-                    child: ElevatedButton(
-                      onPressed: _otpController.text.length == 6 ? _verifyOtp : null,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green.shade600,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(15),
-                        ),
-                      ),
-                      child: const Text(
-                        'Verify & Proceed',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-            
-            const SizedBox(height: 30),
-            
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text(
-                  "Didn't receive the code? ",
-                  style: TextStyle(color: Colors.black54),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const SizedBox(height: 32),
+
+              // Icon
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  shape: BoxShape.circle,
                 ),
-                _timerSeconds > 0
-                    ? Text(
-                        'Resend in ${_timerSeconds}s',
-                        style: const TextStyle(
-                          color: Colors.green,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      )
-                    : TextButton(
-                        onPressed: _resendOtp,
-                        child: const Text(
-                          'Resend OTP',
-                          style: TextStyle(
-                            color: Colors.green,
-                            fontWeight: FontWeight.bold,
+                child: const Icon(
+                  Icons.verified_rounded,
+                  size: 64,
+                  color: Colors.blue,
+                ),
+              ),
+              const SizedBox(height: 28),
+
+              // Title
+              Text(
+                'OTP Verification',
+                style: GoogleFonts.poppins(
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold,
+                  color: const Color(0xFF1A1A1A),
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // Subtitle
+              Text(
+                'Enter the 6-digit code sent to',
+                style: GoogleFonts.poppins(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '+91 ${widget.phone}',
+                style: GoogleFonts.poppins(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.blue.shade700,
+                ),
+              ),
+              const SizedBox(height: 48),
+
+              // OTP Input (Pinput)
+              Pinput(
+                length: 6,
+                controller: _otpController,
+                focusNode: _focusNode,
+                autofocus: true,
+                defaultPinTheme: defaultPinTheme,
+                focusedPinTheme: focusedPinTheme,
+                submittedPinTheme: submittedPinTheme,
+                keyboardType: TextInputType.number,
+                hapticFeedbackType: HapticFeedbackType.lightImpact,
+                onCompleted: (_) => _verifyOtp(),
+              ),
+
+              const SizedBox(height: 48),
+
+              // Verify Button
+              SizedBox(
+                width: double.infinity,
+                height: 54,
+                child: ElevatedButton(
+                  onPressed: (_isOtpComplete && !isLoading) ? _verifyOtp : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: Colors.blue.shade100,
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  child: isLoading
+                      ? const SizedBox(
+                          height: 24,
+                          width: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2.5,
+                          ),
+                        )
+                      : Text(
+                          'Verify & Continue',
+                          style: GoogleFonts.poppins(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
+                ),
+              ),
+
+              const SizedBox(height: 28),
+
+              // Resend OTP
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    "Didn't receive the code? ",
+                    style: GoogleFonts.poppins(
+                      fontSize: 14,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                  if (_timerSeconds > 0)
+                    Text(
+                      'Resend in ${_timerSeconds}s',
+                      style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        color: Colors.blue,
+                        fontWeight: FontWeight.w600,
                       ),
-              ],
-            ),
-          ],
+                    )
+                  else
+                    GestureDetector(
+                      onTap: isLoading ? null : _resendOtp,
+                      child: Text(
+                        'Resend OTP',
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          color: Colors.blue,
+                          fontWeight: FontWeight.w700,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+
+              const SizedBox(height: 40),
+            ],
+          ),
         ),
       ),
     );
