@@ -183,11 +183,6 @@ flutter run
 
 ---
 
-## 📸 Screenshots
-
-(Add your app screenshots here)
-
----
 
 ## 🚧 Future Improvements
 
