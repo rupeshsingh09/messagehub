@@ -1,5 +1,6 @@
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'api_service.dart';
+import '../config/app_config.dart';
 
 class SocketService {
   SocketService._internal();
@@ -12,29 +13,36 @@ class SocketService {
   // ===========================
   // 🔌 CONNECT
   // ===========================
-  void connect() {
-    if (_socket != null && _socket!.connected) return;
+  void connect(String userId) {
+    if (_socket != null && _socket!.connected) {
+      print('[Socket] ℹ️ Already connected');
+      return;
+    }
 
-    final String serverUrl = ApiService.baseUrl;
+    final String serverUrl = AppConfig.socketUrl;
 
     print('[Socket] 🌐 Connecting to: $serverUrl');
+
+    // If socket exists but not connected, we might want to dispose and recreate 
+    // to ensure clean state and no duplicate listeners from previous attempts
+    if (_socket != null) {
+      _socket!.dispose();
+    }
 
     _socket = IO.io(
       serverUrl,
       IO.OptionBuilder()
-          .setTransports(['websocket']) // important
+          .setTransports(['websocket'])
           .disableAutoConnect()
           .enableReconnection()
-          .setReconnectionAttempts(5)
-          .setReconnectionDelay(2000)
+          .setReconnectionAttempts(10)
+          .setReconnectionDelay(3000)
           .build(),
     );
 
-    _socket!.connect();
-
-    // ✅ Debug logs
     _socket!.onConnect((_) {
-      print('[Socket] ✅ Connected | id: ${_socket!.id}');
+      print('[Socket] ✅ Socket connected | id: ${_socket!.id}');
+      joinRoom(userId);
     });
 
     _socket!.onDisconnect((_) {
@@ -47,7 +55,10 @@ class SocketService {
 
     _socket!.onReconnect((_) {
       print('[Socket] 🔄 Reconnected');
+      joinRoom(userId);
     });
+
+    _socket!.connect();
   }
 
   // ===========================
@@ -55,9 +66,12 @@ class SocketService {
   // ===========================
   void disconnect() {
     print('[Socket] 🛑 Disconnecting...');
-    _socket?.disconnect();
-    _socket?.dispose();
-    _socket = null;
+    if (_socket != null) {
+      _socket!.offAny(); // Clear all listeners
+      _socket!.disconnect();
+      _socket!.dispose();
+      _socket = null;
+    }
   }
 
   // ===========================
@@ -70,7 +84,7 @@ class SocketService {
     }
 
     _socket!.emit('join', userId);
-    print('[Socket] 📤 Joined room: $userId');
+    print('[Socket] ✅ Joined room: $userId');
   }
 
   // ===========================
@@ -81,6 +95,11 @@ class SocketService {
     required String receiverId,
     required String message,
     String? imageUrl,
+    String? audioUrl,
+    String? type,
+    String? replyToId,
+    String? replyText,
+    String? replyType,
   }) {
     if (_socket == null || !_socket!.connected) {
       print('[Socket] ⚠️ Cannot send message, not connected');
@@ -88,15 +107,19 @@ class SocketService {
     }
 
     final payload = {
-      'senderId': senderId,
-      'receiverId': receiverId,
+      'sender': senderId,
+      'receiver': receiverId,
       'message': message,
       'imageUrl': imageUrl,
+      'audioUrl': audioUrl,
+      'type': type ?? 'text',
+      'replyToId': replyToId,
+      'replyText': replyText,
+      'replyType': replyType,
     };
 
     _socket!.emit('send_message', payload);
-
-    print('[Socket] 📤 send_message: $payload');
+    print('[Socket] 📤 Message emitted: $payload');
   }
 
   // ===========================
@@ -144,11 +167,66 @@ class SocketService {
   }
 
   // ===========================
+  // ✅ MESSAGE STATUS
+  // ===========================
+  void updateMessageStatus({
+    required String messageId,
+    required String senderId,
+    required String receiverId,
+    required String status,
+  }) {
+    if (_socket == null || !_socket!.connected) return;
+    _socket!.emit('update_status', {
+      'messageId': messageId,
+      'senderId': senderId,
+      'receiverId': receiverId,
+      'status': status,
+    });
+  }
+
+  void onMessageStatus(Function(Map<String, dynamic>) callback) {
+    _socket?.on('status_updated', (data) {
+      callback(Map<String, dynamic>.from(data));
+    });
+  }
+
+  // ===========================
+  // 🗑 DELETE MESSAGE
+  // ===========================
+  void onMessageDeleted(Function(Map<String, dynamic>) callback) {
+    _socket?.on('message_deleted', (data) {
+      callback(Map<String, dynamic>.from(data));
+    });
+  }
+
+  // ===========================
+  // 🖼 PROFILE UPDATES
+  // ===========================
+  void emitProfileUpdate(Map<String, dynamic> data) {
+    if (_socket == null || !_socket!.connected) return;
+    _socket!.emit('update_profile', data);
+    print('[Socket] 🖼 Profile update emitted: $data');
+  }
+
+  // ===========================
+  // 🟢 USER STATUS (ONLINE/LAST SEEN)
+  // ===========================
+  void onUserStatus(Function(Map<String, dynamic>) callback) {
+    _socket?.on('user_status', (data) {
+      print('[Socket] 🟢 user_status: $data');
+      callback(Map<String, dynamic>.from(data));
+    });
+  }
+
+  // ===========================
   // 🧹 CLEANUP
   // ===========================
   void offChatEvents() {
     _socket?.off('receive_message');
     _socket?.off('typing');
     _socket?.off('stop_typing');
+    _socket?.off('user_status');
+    _socket?.off('status_updated');
+    _socket?.off('message_deleted');
   }
 }

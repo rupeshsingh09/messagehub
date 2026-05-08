@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:swipe_to/swipe_to.dart';
-import '../services/date_formatter.dart';
+import '../utils/date_formatter.dart';
 import '../models/user_model.dart';
 import '../models/message_model.dart';
 import '../providers/chat_provider.dart';
@@ -105,12 +105,9 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Container(
         decoration: BoxDecoration(
           image: DecorationImage(
-            image: const AssetImage('assets/images/chat_bg.png'), // Add a default bg if exists, else skip
+            image: const NetworkImage('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'), // Standard WhatsApp BG
             fit: BoxFit.cover,
-            colorFilter: ColorFilter.mode(
-              Colors.black.withOpacity(Theme.of(context).brightness == Brightness.dark ? 0.4 : 0.1),
-              BlendMode.dstATop,
-            ),
+            opacity: Theme.of(context).brightness == Brightness.dark ? 0.05 : 0.1,
           ),
         ),
         child: Column(
@@ -249,17 +246,17 @@ class _ChatScreenState extends State<ChatScreen> {
         
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          color: Colors.black12,
+          color: Theme.of(context).cardColor.withOpacity(0.9),
           child: Row(
             children: [
-              const Icon(Icons.reply, size: 20, color: Colors.green),
+              const Icon(Icons.reply, size: 20, color: Color(0xFF00A884)),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(provider.replyToMessage!.isMe ? 'You' : 'Replied', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                    Text(provider.replyToMessage!.isMe ? 'You' : 'Replied', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF00A884))),
                     Text(provider.replyToMessage!.text, maxLines: 1, overflow: TextOverflow.ellipsis),
                   ],
                 ),
@@ -338,7 +335,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _showAccountDetails() {
-     // Implementation same as before but including bio
      final provider = context.read<ChatProvider>();
      final latestUser = provider.users.firstWhere((u) => u.id == widget.user.id, orElse: () => widget.user);
      

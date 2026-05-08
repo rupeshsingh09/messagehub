@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+
 import '../models/user_model.dart';
 import '../providers/chat_provider.dart';
-import '../providers/theme_provider.dart';
-import '../services/date_formatter.dart';
-import 'chat_screen.dart';
-import 'package:image_picker/image_picker.dart';
-import 'login_screen.dart';
+import '../viewmodels/theme_viewmodel.dart';
+import '../utils/date_formatter.dart';
 import '../services/api_service.dart';
+
+import '../views/chat_screen.dart';
+import '../views/login_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -41,7 +43,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final themeProvider = Provider.of<ThemeProvider>(context);
+    final themeProvider = Provider.of<ThemeViewModel>(context);
     final chatProvider = Provider.of<ChatProvider>(context);
 
     return Scaffold(
@@ -80,7 +82,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
-  AppBar _buildDefaultAppBar(ThemeProvider themeProvider) {
+  AppBar _buildDefaultAppBar(ThemeViewModel themeProvider) {
     return AppBar(
       title: const Text('MessageHub', style: TextStyle(fontWeight: FontWeight.bold)),
       actions: [

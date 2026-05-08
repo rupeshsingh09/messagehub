@@ -20,15 +20,11 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   void _checkAuth() async {
-    // Show splash for 2 seconds
     await Future.delayed(const Duration(seconds: 2));
-
-    // Check SharedPreferences for user data
     final bool loggedIn = await StorageService.isLoggedIn();
 
     if (mounted) {
       if (loggedIn) {
-        // Load user into provider if logged in
         await context.read<ChatProvider>().loadUserLocally();
         Navigator.pushReplacementNamed(context, '/home');
       } else {
@@ -45,17 +41,16 @@ class _SplashScreenState extends State<SplashScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Logo or Icon
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: Colors.blue.shade50,
+                color: Colors.green.shade50,
                 shape: BoxShape.circle,
               ),
               child: const Icon(
                 Icons.chat_bubble_rounded,
                 size: 80,
-                color: Colors.blue,
+                color: Color(0xFF00A884),
               ),
             ),
             const SizedBox(height: 24),
@@ -64,13 +59,13 @@ class _SplashScreenState extends State<SplashScreen> {
               style: GoogleFonts.poppins(
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
-                color: Colors.blue.shade900,
+                color: const Color(0xFF075E54),
                 letterSpacing: 1.2,
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              'Secure & Professional Chat',
+              'Connecting the World',
               style: GoogleFonts.poppins(
                 fontSize: 14,
                 color: Colors.grey.shade600,
@@ -79,7 +74,7 @@ class _SplashScreenState extends State<SplashScreen> {
             const SizedBox(height: 48),
             const CircularProgressIndicator(
               strokeWidth: 3,
-              valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF25D366)),
             ),
           ],
         ),

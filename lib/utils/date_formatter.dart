@@ -12,7 +12,7 @@ class DateFormatter {
     } else if (dateToCheck == yesterday) {
       return 'Yesterday';
     } else if (now.difference(dateTime).inDays < 7) {
-      return DateFormat('EEEE').format(dateTime); // Day name
+      return DateFormat('EEEE').format(dateTime);
     } else {
       return DateFormat('dd/MM/yyyy').format(dateTime);
     }

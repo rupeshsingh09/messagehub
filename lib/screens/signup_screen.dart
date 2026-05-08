@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import '../services/chat_provider.dart';
+import '../providers/chat_provider.dart';
 import 'otp_screen.dart';
 
 class SignupScreen extends StatefulWidget {

@@ -1,14 +1,22 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/user_model.dart';
 import '../models/message_model.dart';
-import 'package:flutter_contacts/flutter_contacts.dart';
-import 'api_service.dart';
-import 'socket_service.dart';
-import 'storage_service.dart';
-import 'contact_service.dart';
+import '../repositories/user_repository.dart';
+import '../repositories/chat_repository.dart';
+import '../services/socket_service.dart';
+import '../services/storage_service.dart';
+import '../services/contact_service.dart';
+import '../services/audio_service.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:uuid/uuid.dart';
 
 class ChatProvider with ChangeNotifier {
+  final UserRepository _userRepository = UserRepository();
+  final ChatRepository _chatRepository = ChatRepository();
+  final AudioService _audioService = AudioService();
+  final _uuid = const Uuid();
+
   ChatUser? _currentUser;
   List<ChatUser> _users = [];
   List<Message> _messages = [];
@@ -17,6 +25,13 @@ class ChatProvider with ChangeNotifier {
   bool _isPartnerTyping = false;
   String? _token;
   String? _currentOpenChatUserId;
+
+  // Search
+  String _userSearchQuery = '';
+  String _messageSearchQuery = '';
+  
+  // Reply
+  Message? _replyToMessage;
 
   // Track unread counts
   Map<String, int> _unreadCounts = {};
@@ -27,8 +42,14 @@ class ChatProvider with ChangeNotifier {
 
   ChatUser? get currentUser => _currentUser;
   String? get token => _token;
-  List<ChatUser> get users => _users;
-  List<Message> get messages => _messages;
+  List<ChatUser> get users {
+    if (_userSearchQuery.isEmpty) return _users;
+    return _users.where((u) => u.name.toLowerCase().contains(_userSearchQuery.toLowerCase())).toList();
+  }
+  List<Message> get messages {
+    if (_messageSearchQuery.isEmpty) return _messages;
+    return _messages.where((m) => m.text.toLowerCase().contains(_messageSearchQuery.toLowerCase())).toList();
+  }
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get isPartnerTyping => _isPartnerTyping;
@@ -36,22 +57,22 @@ class ChatProvider with ChangeNotifier {
   String? get currentOpenChatUserId => _currentOpenChatUserId;
   Map<String, bool> get onlineStatus => _onlineStatus;
   Map<String, DateTime?> get lastSeenTimes => _lastSeenTimes;
+  Message? get replyToMessage => _replyToMessage;
+  AudioService get audioService => _audioService;
 
   // ===========================
   // 👤 USER SETUP
   // ===========================
 
-  /// Call this after OTP verified — saves to SharedPreferences and connects socket.
   void setCurrentUser(ChatUser user, String? token) {
     _currentUser = user;
     _token = token;
     StorageService.saveUser(user, token);
     SocketService.instance.connect(user.id);
-    _listenForIncomingMessages(); // Start listening for messages globally
+    _listenForIncomingMessages();
     notifyListeners();
   }
 
-  /// Loads user from SharedPreferences on app start (called by SplashScreen indirectly).
   Future<void> loadUserLocally() async {
     final user = await StorageService.getUser();
     final token = await StorageService.getToken();
@@ -59,12 +80,11 @@ class ChatProvider with ChangeNotifier {
       _currentUser = user;
       _token = token;
       SocketService.instance.connect(user.id);
-      _listenForIncomingMessages(); // Start listening for messages globally
+      _listenForIncomingMessages();
       notifyListeners();
     }
   }
 
-  /// Clears all user data, disconnects socket, and navigates to signup.
   Future<void> logout() async {
     await StorageService.logout();
     _currentUser = null;
@@ -81,12 +101,11 @@ class ChatProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  /// Permanent account deletion
   Future<bool> deleteAccount() async {
     _isLoading = true;
     notifyListeners();
     
-    final success = await ApiService.deleteAccount();
+    final success = await _userRepository.deleteAccount();
     
     if (success) {
       await logout();
@@ -95,6 +114,16 @@ class ChatProvider with ChangeNotifier {
     _isLoading = false;
     notifyListeners();
     return success;
+  }
+
+  Future<void> updateBio(String bio) async {
+    if (_currentUser == null) return;
+    final success = await _userRepository.updateBio(bio);
+    if (success) {
+      _currentUser = _currentUser!.copyWith(bio: bio);
+      await StorageService.saveUser(_currentUser!, _token);
+      notifyListeners();
+    }
   }
 
   // ===========================
@@ -114,25 +143,23 @@ class ChatProvider with ChangeNotifier {
       notifyListeners();
 
       try {
-        // Update Backend directly with file path (local upload)
-        final result = await ApiService.updateProfilePic(pickedFile.path);
+        final result = await _userRepository.updateProfilePic(pickedFile.path);
         
         if (result['success'] == true) {
           final updatedUser = result['user'] as ChatUser;
           final imageUrl = result['profilePic'] as String;
           
-          // Update Local State
           _currentUser = updatedUser;
-          
-          // Update SharedPrefs
           await StorageService.saveUser(_currentUser!, _token);
           
-          print('[ChatProvider] Profile photo updated: $imageUrl');
+          SocketService.instance.emitProfileUpdate({
+            'userId': _currentUser!.id,
+            'profilePic': imageUrl,
+          });
         } else {
           _error = result['message'] ?? 'Failed to upload photo';
         }
       } catch (e) {
-        print('[ChatProvider] Error updating profile photo: $e');
         _error = 'Failed to update profile photo';
       } finally {
         _isLoading = false;
@@ -146,10 +173,15 @@ class ChatProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      final success = await ApiService.removeProfilePic();
+      final success = await _userRepository.removeProfilePic();
       if (success) {
         _currentUser = _currentUser?.copyWith(profilePic: '');
         await StorageService.saveUser(_currentUser!, _token);
+        
+        SocketService.instance.emitProfileUpdate({
+          'userId': _currentUser!.id,
+          'profilePic': '',
+        });
       }
     } catch (e) {
       print('[ChatProvider] Error removing profile photo: $e');
@@ -172,33 +204,24 @@ class ChatProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      // 1. Disconnect current socket
       SocketService.instance.disconnect();
 
-      // 2. Load new user data
       final user = ChatUser.fromJson(accountData['user']);
       final token = accountData['token'];
 
       _currentUser = user;
       _token = token;
 
-      // 3. Save as current session in SharedPrefs
       await StorageService.saveUser(user, token);
 
-      // 4. Reconnect socket
       SocketService.instance.connect(user.id);
       _listenForIncomingMessages();
 
-      // 5. Reset states
       _users = [];
       _messages = [];
       _unreadCounts = {};
       _onlineStatus = {};
       _lastSeenTimes = {};
-      
-      print('[ChatProvider] Switched to account: ${user.name}');
-    } catch (e) {
-      print('[ChatProvider] Error switching account: $e');
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -209,14 +232,12 @@ class ChatProvider with ChangeNotifier {
   // 🔐 OTP AUTH FLOW
   // ===========================
 
-  /// Step 1: Call /send-otp API — triggers OTP delivery.
   Future<bool> sendOtp(String phone) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
-    final result = await ApiService.sendOtp(phone);
-
+    final result = await _userRepository.sendOtp(phone);
     _isLoading = false;
 
     if (result['success'] == true) {
@@ -229,20 +250,18 @@ class ChatProvider with ChangeNotifier {
     return false;
   }
 
-  /// Step 2: Call /verify-otp API — on success saves user & routes to home.
   Future<bool> loginWithOtp(String phone, String otp, String firstName) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
-    final result = await ApiService.verifyOtp(phone, otp, firstName);
-
+    final result = await _userRepository.verifyOtp(phone, otp, firstName);
     _isLoading = false;
 
     if (result['success'] == true) {
       final ChatUser user = result['user'] as ChatUser;
       final String? token = result['token'] as String?;
-      setCurrentUser(user, token); // saves to SharedPreferences + connects socket
+      setCurrentUser(user, token);
       return true;
     }
 
@@ -261,42 +280,31 @@ class ChatProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      final List<dynamic> usersData = await ApiService.getUsers();
+      final List<ChatUser> fetchedUsers = await _userRepository.getUsers();
 
-      if (usersData.isEmpty) {
+      if (fetchedUsers.isEmpty) {
         _users = [];
-        print('[ChatProvider] No users found on server');
         return;
       }
 
       final Map<String, ChatUser> uniqueUsers = {};
-      for (var data in usersData) {
-        final user = ChatUser.fromJson(data);
+      for (var user in fetchedUsers) {
         if (_currentUser != null && user.id == _currentUser!.id) continue;
         uniqueUsers[user.id] = user;
         
-        // Populate initial status if available
-        if (data['isOnline'] != null) {
-          _onlineStatus[user.id] = data['isOnline'];
-        }
-        if (data['lastSeen'] != null) {
-          _lastSeenTimes[user.id] = DateTime.tryParse(data['lastSeen']);
-        }
+        _onlineStatus[user.id] = user.isOnline;
+        _lastSeenTimes[user.id] = user.lastSeen;
       }
 
       _users = uniqueUsers.values.toList();
       _sortUsers();
       
-      // Sync unread counts from server data
       for (var user in _users) {
         if (user.unreadCount > 0) {
           _unreadCounts[user.id] = user.unreadCount;
         }
       }
-      
-      print('[ChatProvider] Successfully fetched ${_users.length} users');
     } catch (e) {
-      print('[ChatProvider] Error fetching users: $e');
       _error = 'Failed to load users: $e';
     } finally {
       _isLoading = false;
@@ -304,60 +312,36 @@ class ChatProvider with ChangeNotifier {
     }
   }
 
-  /// Fetches device contacts, cleans them, and matches them with backend users.
   Future<void> fetchContactsAndMatch() async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      // 1. Get cleaned numbers from device
       final List<String> phoneNumbers = await ContactService.getDevicePhoneNumbers();
 
       if (phoneNumbers.isEmpty) {
         _users = [];
-        _error = 'No contacts found on device';
-        print('[ChatProvider] No device contacts to match');
         return;
       }
 
-      // 2. Send to backend to find matched users
-      final List<dynamic> matchedUsers = await ApiService.matchContacts(phoneNumbers);
+      final List<ChatUser> matchedUsers = await _userRepository.matchContacts(phoneNumbers);
 
-      // 3. Handle empty state and convert to ChatUser objects
-      if (matchedUsers.isEmpty) {
-        _users = [];
-        print('[ChatProvider] No matching users found for contacts');
-      } else {
-        _users = matchedUsers
-            .map((data) {
-              final user = ChatUser.fromJson(data);
-              // Store status data
-              if (data['isOnline'] != null) {
-                _onlineStatus[user.id] = data['isOnline'];
-              }
-              if (data['lastSeen'] != null) {
-                _lastSeenTimes[user.id] = DateTime.tryParse(data['lastSeen']);
-              }
-              return user;
-            })
-            .where((user) => _currentUser == null || user.id != _currentUser!.id)
-            .toList();
-        _sortUsers();
-        
-        // Sync unread counts from server data
-        for (var user in _users) {
-          if (user.unreadCount > 0) {
-            _unreadCounts[user.id] = user.unreadCount;
-          }
+      _users = matchedUsers
+          .where((user) => _currentUser == null || user.id != _currentUser!.id)
+          .toList();
+          
+      for (var user in _users) {
+        _onlineStatus[user.id] = user.isOnline;
+        _lastSeenTimes[user.id] = user.lastSeen;
+        if (user.unreadCount > 0) {
+          _unreadCounts[user.id] = user.unreadCount;
         }
       }
-      
-      print('[ChatProvider] Matched ${_users.length} contacts');
+      _sortUsers();
     } catch (e) {
-      print('[ChatProvider] Error in fetchContactsAndMatch: $e');
       _error = e.toString().contains('denied') 
-          ? 'Contacts permission denied. Please enable in settings.' 
+          ? 'Contacts permission denied.' 
           : 'Failed to match contacts: $e';
     } finally {
       _isLoading = false;
@@ -369,26 +353,41 @@ class ChatProvider with ChangeNotifier {
   // 💬 MESSAGES
   // ===========================
 
-  /// Track currently opened chat for unread logic
   void setCurrentChat(String? userId) {
     _currentOpenChatUserId = userId;
     if (userId != null) {
       clearUnreadCount(userId);
       _isPartnerTyping = false;
+      _markMessagesAsSeen(userId);
     }
     notifyListeners();
   }
 
-  /// Reset unread count for a user
+  void _markMessagesAsSeen(String otherUserId) {
+    if (_currentUser == null) return;
+    
+    bool changed = false;
+    for (var i = 0; i < _messages.length; i++) {
+      if (!_messages[i].isMe && _messages[i].status != MessageStatus.seen) {
+        _messages[i] = _messages[i].copyWith(status: MessageStatus.seen);
+        SocketService.instance.updateMessageStatus(
+          messageId: _messages[i].id,
+          senderId: otherUserId,
+          receiverId: _currentUser!.id,
+          status: 'seen',
+        );
+        changed = true;
+      }
+    }
+    if (changed) notifyListeners();
+  }
+
   void clearUnreadCount(String userId) {
     _unreadCounts[userId] = 0;
-    
-    // Also update the user object in the list
     final index = _users.indexWhere((u) => u.id == userId);
     if (index != -1) {
       _users[index] = _users[index].copyWith(unreadCount: 0);
     }
-    
     notifyListeners();
   }
 
@@ -400,8 +399,8 @@ class ChatProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      _messages =
-          await ApiService.getMessages(_currentUser!.id, receiverId);
+      _messages = await _chatRepository.getMessages(_currentUser!.id, receiverId);
+      _markMessagesAsSeen(receiverId);
     } catch (e) {
       _error = 'Failed to load messages';
     } finally {
@@ -410,19 +409,17 @@ class ChatProvider with ChangeNotifier {
     }
   }
 
-  /// Clear Chat Locally and on Server
   Future<bool> clearChat(String otherUserId) async {
     _isLoading = true;
     notifyListeners();
     
-    final success = await ApiService.clearChat(otherUserId);
+    final success = await _chatRepository.clearChat(otherUserId);
     
     if (success) {
       if (otherUserId == _currentOpenChatUserId) {
         _messages = [];
       }
       
-      // Update last message in users list
       final index = _users.indexWhere((u) => u.id == otherUserId);
       if (index != -1) {
         _users[index] = _users[index].copyWith(
@@ -437,18 +434,16 @@ class ChatProvider with ChangeNotifier {
     return success;
   }
 
-  /// Clear ALL Chats Locally and on Server
   Future<bool> clearAllChats() async {
     _isLoading = true;
     notifyListeners();
     
-    final success = await ApiService.clearAllChats();
+    final success = await _chatRepository.clearAllChats();
     
     if (success) {
       _messages = [];
       _unreadCounts = {};
       
-      // Update all users in list to remove last message info
       _users = _users.map((user) => user.copyWith(
         lastMessage: null,
         lastMessageTime: null,
@@ -465,27 +460,31 @@ class ChatProvider with ChangeNotifier {
     SocketService.instance.offChatEvents();
 
     SocketService.instance.onReceiveMessage((data) {
-      print('[Socket] 📩 Message received: $data');
-      
       final senderId = data['senderId'] ?? data['sender'];
       final receiverId = data['receiverId'] ?? data['receiver'];
 
       if (receiverId == _currentUser?.id) {
         final messageObj = Message.fromJson(data, _currentUser?.id ?? '');
         
-        // Update user in list and move to top
         _updateUserInList(
           senderId,
-          lastMessage: messageObj.text,
+          lastMessage: messageObj.type == MessageType.image ? '📷 Image' : (messageObj.type == MessageType.audio ? '🎤 Voice' : messageObj.text),
           lastMessageTime: messageObj.timestamp,
           incrementUnread: senderId != _currentOpenChatUserId,
-          // Handle case where user might not be in list (e.g. from socket data)
           name: data['senderName'] ?? data['name'],
+          skipNotify: true, // We'll notify manually below
         );
 
-        // If message is from the user we are currently chatting with
         if (senderId == _currentOpenChatUserId) {
           _messages.add(messageObj);
+          _markMessagesAsSeen(senderId);
+        } else {
+           SocketService.instance.updateMessageStatus(
+             messageId: messageObj.id,
+             senderId: senderId,
+             receiverId: _currentUser!.id,
+             status: 'delivered',
+           );
         }
         notifyListeners();
       }
@@ -511,78 +510,166 @@ class ChatProvider with ChangeNotifier {
       if (userId != null) {
         _onlineStatus[userId] = data['isOnline'] ?? false;
         if (data['lastSeen'] != null) {
-          _lastSeenTimes[userId] = DateTime.tryParse(data['lastSeen']);
+          _lastSeenTimes[userId] = DateTime.tryParse(data['lastSeen'])?.toLocal();
         }
         
-        // Update profile pic if present in status update
         if (data['profilePic'] != null) {
-          _updateUserInList(userId, profilePic: data['profilePic']);
+          _updateUserInList(userId, profilePic: data['profilePic'], skipNotify: true);
         }
         
         notifyListeners();
       }
     });
+
+    SocketService.instance.onMessageStatus((data) {
+      final messageId = data['messageId'];
+      final statusStr = data['status'];
+      final index = _messages.indexWhere((m) => m.id == messageId);
+      if (index != -1) {
+        MessageStatus status = MessageStatus.sent;
+        if (statusStr == 'seen') status = MessageStatus.seen;
+        else if (statusStr == 'delivered') status = MessageStatus.delivered;
+        
+        _messages[index] = _messages[index].copyWith(status: status);
+        notifyListeners();
+      }
+    });
+
+    SocketService.instance.onMessageDeleted((data) {
+      final messageId = data['messageId'];
+      final index = _messages.indexWhere((m) => m.id == messageId);
+      if (index != -1) {
+        _messages[index] = _messages[index].copyWith(isDeleted: true, text: 'This message was deleted');
+        notifyListeners();
+      }
+    });
   }
 
-  Future<void> sendMessage(String receiverId, String text,
-      {String? imageUrl}) async {
+  Future<void> sendMessage(String receiverId, String text, {
+    String? imageUrl, 
+    String? audioUrl, 
+    MessageType type = MessageType.text
+  }) async {
     if (_currentUser == null) return;
 
+    final tempId = _uuid.v4();
     final newMessage = Message(
-      id: 'temp_${DateTime.now().millisecondsSinceEpoch}',
+      id: tempId,
       senderId: _currentUser!.id,
       receiverId: receiverId,
       text: text,
       imageUrl: imageUrl,
+      audioUrl: audioUrl,
       timestamp: DateTime.now().toLocal(),
       isMe: true,
+      type: type,
+      replyToId: _replyToMessage?.id,
+      replyText: _replyToMessage?.text,
+      replyType: _replyToMessage?.type,
     );
 
     _messages.add(newMessage);
+    _replyToMessage = null; // Clear reply
     notifyListeners();
 
-    final responseData = await ApiService.sendMessage(
+    final responseData = await _chatRepository.sendMessage(
       sender: _currentUser!.id,
       receiver: receiverId,
       message: text,
       imageUrl: imageUrl,
+      audioUrl: audioUrl,
+      type: type.name,
+      replyToId: newMessage.replyToId,
+      replyText: newMessage.replyText,
+      replyType: newMessage.replyType?.name,
     );
 
-    // If backend returns the saved message, update our local copy with the correct timestamp
     if (responseData != null) {
       final backendMsg = Message.fromJson(responseData, _currentUser!.id);
       
-      // Update user in list and move to top
       _updateUserInList(
         receiverId,
-        lastMessage: backendMsg.text,
+        lastMessage: type == MessageType.image ? '📷 Image' : (type == MessageType.audio ? '🎤 Voice' : backendMsg.text),
         lastMessageTime: backendMsg.timestamp,
+        skipNotify: true,
       );
 
-      final index = _messages.indexOf(newMessage);
+      final index = _messages.indexWhere((m) => m.id == tempId);
       if (index != -1) {
         _messages[index] = backendMsg;
-        notifyListeners();
       }
-    } else {
-      // Even if backend fails, move to top with local time
-      _updateUserInList(
-        receiverId,
-        lastMessage: text,
-        lastMessageTime: newMessage.timestamp,
+      
+      SocketService.instance.sendMessage(
+        senderId: _currentUser!.id,
+        receiverId: receiverId,
+        message: text,
+        imageUrl: imageUrl,
+        audioUrl: audioUrl,
+        type: type.name,
+        replyToId: newMessage.replyToId,
+        replyText: newMessage.replyText,
+        replyType: newMessage.replyType?.name,
       );
+      notifyListeners();
     }
-
-    SocketService.instance.sendMessage(
-      senderId: _currentUser!.id,
-      receiverId: receiverId,
-      message: text,
-      imageUrl: imageUrl,
-    );
   }
 
-  Future<void> sendImageMessage(String receiverId, String imageUrl) async {
-    await sendMessage(receiverId, '📷 Image', imageUrl: imageUrl);
+  Future<void> deleteMessage(String messageId, bool forEveryone) async {
+    final success = await _chatRepository.deleteMessage(messageId, forEveryone);
+    if (success) {
+      final index = _messages.indexWhere((m) => m.id == messageId);
+      if (index != -1) {
+        if (forEveryone) {
+           _messages[index] = _messages[index].copyWith(isDeleted: true, text: 'This message was deleted');
+        } else {
+           _messages.removeAt(index);
+        }
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> sendImageMessage(String receiverId, XFile file) async {
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final uploadResult = await _chatRepository.uploadFile(file.path, 'image');
+      if (uploadResult['success']) {
+        await sendMessage(receiverId, '📷 Image', imageUrl: uploadResult['url'], type: MessageType.image);
+      }
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> sendVoiceMessage(String receiverId, String path) async {
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final uploadResult = await _chatRepository.uploadFile(path, 'audio');
+      if (uploadResult['success']) {
+        await sendMessage(receiverId, '🎤 Voice', audioUrl: uploadResult['url'], type: MessageType.audio);
+      }
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  void setReplyTo(Message? message) {
+    _replyToMessage = message;
+    notifyListeners();
+  }
+
+  void setUserSearch(String query) {
+    _userSearchQuery = query;
+    notifyListeners();
+  }
+
+  void setMessageSearch(String query) {
+    _messageSearchQuery = query;
+    notifyListeners();
   }
 
   void sendTypingStatus(String receiverId, bool isTyping) {
@@ -608,7 +695,7 @@ class ChatProvider with ChangeNotifier {
   }
 
   void _updateUserInList(String userId,
-      {String? lastMessage, DateTime? lastMessageTime, bool incrementUnread = false, String? name, String? profilePic}) {
+      {String? lastMessage, DateTime? lastMessageTime, bool incrementUnread = false, String? name, String? profilePic, bool skipNotify = false}) {
     final index = _users.indexWhere((u) => u.id == userId);
     
     if (index != -1) {
@@ -622,14 +709,12 @@ class ChatProvider with ChangeNotifier {
         profilePic: profilePic ?? user.profilePic,
       );
       
-      // Keep unreadCounts map in sync for UI
       _unreadCounts[userId] = newUnreadCount;
     } else if (name != null) {
-      // Add new user if not in list
       final newUser = ChatUser(
         id: userId,
         name: name,
-        phone: '', // Placeholder
+        phone: '',
         lastMessage: lastMessage,
         lastMessageTime: lastMessageTime,
         unreadCount: incrementUnread ? 1 : 0,
@@ -640,6 +725,12 @@ class ChatProvider with ChangeNotifier {
     }
     
     _sortUsers();
-    notifyListeners();
+    if (!skipNotify) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _audioService.dispose();
+    super.dispose();
   }
 }

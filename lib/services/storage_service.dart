@@ -7,7 +7,9 @@ class StorageService {
   static const String _tokenKey = 'auth_token';
   static const String _userIdKey = 'user_id';
 
-  // Save user data
+  static const String _accountsKey = 'saved_accounts';
+
+  // Save user data (also adds to saved accounts)
   static Future<void> saveUser(ChatUser user, String? token) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_userKey, jsonEncode(user.toJson()));
@@ -15,6 +17,34 @@ class StorageService {
       await prefs.setString(_tokenKey, token);
     }
     await prefs.setString(_userIdKey, user.id);
+
+    // Save to multi-account list
+    await _addToSavedAccounts(user, token);
+  }
+
+  static Future<void> _addToSavedAccounts(ChatUser user, String? token) async {
+    if (token == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    List<String> accounts = prefs.getStringList(_accountsKey) ?? [];
+    
+    // Remove if already exists to avoid duplicates
+    accounts.removeWhere((acc) {
+      final decoded = jsonDecode(acc);
+      return decoded['user']['id'] == user.id || decoded['user']['_id'] == user.id;
+    });
+
+    accounts.add(jsonEncode({
+      'user': user.toJson(),
+      'token': token,
+    }));
+
+    await prefs.setStringList(_accountsKey, accounts);
+  }
+
+  static Future<List<Map<String, dynamic>>> getSavedAccounts() async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> accounts = prefs.getStringList(_accountsKey) ?? [];
+    return accounts.map((acc) => jsonDecode(acc) as Map<String, dynamic>).toList();
   }
 
   // Get token
@@ -45,11 +75,23 @@ class StorageService {
     return prefs.containsKey(_tokenKey);
   }
 
-  // Clear user data (Logout)
+  // Clear user data (Logout current session)
   static Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_userKey);
     await prefs.remove(_tokenKey);
     await prefs.remove(_userIdKey);
+  }
+
+  // Remove specific account from saved list
+  static Future<void> removeAccount(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> accounts = prefs.getStringList(_accountsKey) ?? [];
+    accounts.removeWhere((acc) {
+      final decoded = jsonDecode(acc);
+      final user = ChatUser.fromJson(decoded['user']);
+      return user.id == userId;
+    });
+    await prefs.setStringList(_accountsKey, accounts);
   }
 }

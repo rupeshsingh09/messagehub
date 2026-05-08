@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/user_model.dart';
-import '../services/date_formatter.dart';
+import '../utils/date_formatter.dart';
+import '../services/api_service.dart';
 
 class UserTile extends StatelessWidget {
   final ChatUser user;
@@ -23,7 +24,7 @@ class UserTile extends StatelessWidget {
         radius: 25,
         backgroundColor: isDark ? Colors.grey[800] : Colors.grey[300],
         backgroundImage: user.profilePic != null && user.profilePic!.isNotEmpty
-            ? CachedNetworkImageProvider(user.profilePic!)
+            ? CachedNetworkImageProvider(ApiService.getImageUrl(user.profilePic!))
             : null,
         child: user.profilePic == null || user.profilePic!.isEmpty
             ? Icon(Icons.person, color: isDark ? Colors.grey[400] : Colors.grey[600], size: 30)

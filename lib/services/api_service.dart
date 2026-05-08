@@ -2,10 +2,16 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/user_model.dart';
 import '../models/message_model.dart';
+import 'storage_service.dart';
+
+import '../config/app_config.dart';
 
 class ApiService {
   // 🔥 Server base URL
-  static const String baseUrl = 'http://192.168.1.9:5000';
+  static String get baseUrl => AppConfig.baseUrl;
+
+  /// Helper to get full image URL from relative path
+  static String getImageUrl(String? path) => AppConfig.getImageUrl(path);
 
   // 🔍 Debug logger
   static void _logResponse(http.Response response, String methodName) {
@@ -23,6 +29,15 @@ class ApiService {
     } catch (_) {
       return fallback;
     }
+  }
+
+  /// Helper to get headers with Bearer token
+  static Future<Map<String, String>> _getAuthHeaders() async {
+    final token = await StorageService.getToken();
+    return {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
   }
 
   // ===========================
@@ -96,7 +111,11 @@ class ApiService {
   // Get all users
   static Future<List<dynamic>> getUsers() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/users'));
+      final headers = await _getAuthHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/users'),
+        headers: headers,
+      );
 
       _logResponse(response, 'getUsers');
 
@@ -125,9 +144,10 @@ class ApiService {
   static Future<List<dynamic>> matchContacts(
       List<String> phoneNumbers) async {
     try {
+      final headers = await _getAuthHeaders();
       final response = await http.post(
         Uri.parse('$baseUrl/api/users/match-contacts'),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
         body: jsonEncode({'phoneNumbers': phoneNumbers}),
       );
 
@@ -159,29 +179,62 @@ class ApiService {
   // ===========================
 
   // Send Message
-  static Future<bool> sendMessage({
+  static Future<Map<String, dynamic>?> sendMessage({
     required String sender,
     required String receiver,
     required String message,
     String? imageUrl,
+    String? audioUrl,
+    String? type,
+    String? replyToId,
+    String? replyText,
+    String? replyType,
   }) async {
     try {
+      final headers = await _getAuthHeaders();
       final response = await http.post(
         Uri.parse('$baseUrl/api/messages/send'),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
         body: jsonEncode({
           'sender': sender,
           'receiver': receiver,
           'message': message,
           'imageUrl': imageUrl,
+          'audioUrl': audioUrl,
+          'type': type ?? 'text',
+          'replyToId': replyToId,
+          'replyText': replyText,
+          'replyType': replyType,
         }),
       );
 
       _logResponse(response, 'sendMessage');
 
-      return response.statusCode == 200 || response.statusCode == 201;
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return jsonDecode(response.body);
+      }
+      return null;
     } catch (e) {
       print('Error sending message: $e');
+      return null;
+    }
+  }
+
+  // Delete Message
+  static Future<bool> deleteMessage(String messageId, bool forEveryone) async {
+    try {
+      final headers = await _getAuthHeaders();
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/messages/delete/$messageId'),
+        headers: headers,
+        body: jsonEncode({'forEveryone': forEveryone}),
+      );
+
+      _logResponse(response, 'deleteMessage');
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Error deleting message: $e');
       return false;
     }
   }
@@ -192,8 +245,10 @@ class ApiService {
       String receiver,
       ) async {
     try {
+      final headers = await _getAuthHeaders();
       final response = await http.get(
         Uri.parse('$baseUrl/api/messages/$sender/$receiver'),
+        headers: headers,
       );
 
       _logResponse(response, 'getMessages');
@@ -220,14 +275,94 @@ class ApiService {
   }
 
   // ===========================
+  // 🧹 CLEANUP & ACCOUNT
+  // ===========================
+
+  // Clear Chat History
+  static Future<bool> clearChat(String otherUserId) async {
+    try {
+      final headers = await _getAuthHeaders();
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/messages/clear/$otherUserId'),
+        headers: headers,
+      );
+
+      _logResponse(response, 'clearChat');
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Error clearing chat: $e');
+      return false;
+    }
+  }
+
+  // Clear All Chats
+  static Future<bool> clearAllChats() async {
+    try {
+      final headers = await _getAuthHeaders();
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/chats/clear'),
+        headers: headers,
+      );
+
+      _logResponse(response, 'clearAllChats');
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Error clearing all chats: $e');
+      return false;
+    }
+  }
+
+  // Delete Account
+  static Future<bool> deleteAccount() async {
+    try {
+      final headers = await _getAuthHeaders();
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/users/delete-account'),
+        headers: headers,
+      );
+
+      _logResponse(response, 'deleteAccount');
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Error deleting account: $e');
+      return false;
+    }
+  }
+
+  // Get User Details (for status/last seen)
+  static Future<Map<String, dynamic>?> getUserDetails(String userId) async {
+    try {
+      final headers = await _getAuthHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/users/details/$userId'),
+        headers: headers,
+      );
+
+      _logResponse(response, 'getUserDetails');
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+      return null;
+    } catch (e) {
+      print('Error getting user details: $e');
+      return null;
+    }
+  }
+
+  // ===========================
   // 🔔 FCM TOKEN
   // ===========================
 
   static Future<bool> updateFcmToken(String userId, String token) async {
     try {
+      final headers = await _getAuthHeaders();
       final response = await http.post(
         Uri.parse('$baseUrl/api/users/update-fcm'),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
         body: jsonEncode({
           'userId': userId,
           'fcmToken': token,
@@ -240,6 +375,129 @@ class ApiService {
     } catch (e) {
       print('Error updating FCM token: $e');
       return false;
+    }
+  }
+
+  // ===========================
+  // 🖼 PROFILE
+  // ===========================
+
+  static Future<Map<String, dynamic>> updateProfilePic(String filePath) async {
+    try {
+      final token = await StorageService.getToken();
+      var request = http.MultipartRequest(
+        'PUT',
+        Uri.parse('$baseUrl/api/users/profile-photo'),
+      );
+
+      if (token != null) {
+        request.headers['Authorization'] = 'Bearer $token';
+      }
+
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'profilePhoto',
+          filePath,
+        ),
+      );
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      _logResponse(response, 'updateProfilePic');
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return {
+          'success': true,
+          'user': ChatUser.fromJson(data['user']),
+          'profilePic': data['user']['profilePic']
+        };
+      }
+      return {
+        'success': false,
+        'message': _extractError(response, 'Failed to upload photo')
+      };
+    } catch (e) {
+      print('Error updating profile pic: $e');
+      return {'success': false, 'message': 'Network error during upload'};
+    }
+  }
+
+  static Future<bool> removeProfilePic() async {
+    try {
+      final headers = await _getAuthHeaders();
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/users/profile-photo'),
+        headers: headers,
+      );
+
+      _logResponse(response, 'removeProfilePic');
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Error removing profile pic: $e');
+      return false;
+    }
+  }
+
+  static Future<bool> updateBio(String bio) async {
+    try {
+      final headers = await _getAuthHeaders();
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/users/update-bio'),
+        headers: headers,
+        body: jsonEncode({'bio': bio}),
+      );
+
+      _logResponse(response, 'updateBio');
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Error updating bio: $e');
+      return false;
+    }
+  }
+
+  static Future<Map<String, dynamic>> uploadFile(String filePath, String type) async {
+    try {
+      final token = await StorageService.getToken();
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/api/messages/upload'),
+      );
+
+      if (token != null) {
+        request.headers['Authorization'] = 'Bearer $token';
+      }
+
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'file',
+          filePath,
+        ),
+      );
+      request.fields['type'] = type;
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      _logResponse(response, 'uploadFile ($type)');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+        return {
+          'success': true,
+          'url': data['url'],
+        };
+      }
+      return {
+        'success': false,
+        'message': _extractError(response, 'Failed to upload $type')
+      };
+    } catch (e) {
+      print('Error uploading $type: $e');
+      return {'success': false, 'message': 'Network error during upload'};
     }
   }
 }

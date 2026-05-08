@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/chat_provider.dart';
+import '../providers/chat_provider.dart';
 import 'otp_screen.dart';
 
 class LoginScreen extends StatefulWidget {

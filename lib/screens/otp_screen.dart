@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:pinput/pinput.dart';
 import 'package:provider/provider.dart';
-import '../services/chat_provider.dart';
+import '../providers/chat_provider.dart';
 
 class OtpScreen extends StatefulWidget {
   final String phone;
