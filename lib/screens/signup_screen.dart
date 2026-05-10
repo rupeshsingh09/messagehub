@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../providers/chat_provider.dart';
+import '../services/contact_service.dart';
 import 'otp_screen.dart';
 
 class SignupScreen extends StatefulWidget {
@@ -30,11 +31,8 @@ class _SignupScreenState extends State<SignupScreen> {
       return;
     }
 
-    // 🔥 Phone Cleaning: Remove +91, spaces, keep only 10 digits
-    phone = phone.replaceAll(RegExp(r'\D'), ''); // Remove all non-digits
-    if (phone.startsWith('91') && phone.length > 10) {
-      phone = phone.substring(2);
-    }
+    // 🔥 Phone Cleaning: Remove +91, spaces, hyphens, brackets, keep only 10 digits
+    phone = ContactService.cleanNumber(phone);
     
     if (phone.length != 10) {
       _showError('Enter a valid 10-digit phone number');

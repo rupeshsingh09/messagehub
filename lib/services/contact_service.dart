@@ -3,15 +3,17 @@ import 'package:flutter_contacts/flutter_contacts.dart';
 class ContactService {
   /// Clean phone number: remove non-digits, country code (+91), and keep last 10 digits
   static String cleanNumber(String number) {
-    // 1. Remove all non-digit characters (spaces, brackets, dashes, etc.)
+    if (number.isEmpty) return '';
+    
+    // 1. Remove all non-digit characters (spaces, hyphens, brackets, +, etc.)
     String cleaned = number.replaceAll(RegExp(r'\D'), '');
 
-    // 2. Handle Indian country code (+91 or 91)
-    if (cleaned.startsWith('91') && cleaned.length > 10) {
+    // 2. Remove '91' country code if it exists and number is longer than 10 digits
+    if (cleaned.length > 10 && cleaned.startsWith('91')) {
       cleaned = cleaned.substring(cleaned.length - 10);
     }
 
-    // 3. If it's still longer than 10 digits (other country codes), just take the last 10
+    // 3. Keep only the last 10 digits (handles leading zeros like '073...' or other country codes)
     if (cleaned.length > 10) {
       cleaned = cleaned.substring(cleaned.length - 10);
     }

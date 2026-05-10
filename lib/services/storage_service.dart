@@ -27,10 +27,11 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     List<String> accounts = prefs.getStringList(_accountsKey) ?? [];
     
-    // Remove if already exists to avoid duplicates
+    // Remove if already exists to avoid duplicates (by ID or Phone)
     accounts.removeWhere((acc) {
       final decoded = jsonDecode(acc);
-      return decoded['user']['id'] == user.id || decoded['user']['_id'] == user.id;
+      final storedUser = ChatUser.fromJson(decoded['user']);
+      return storedUser.id == user.id || storedUser.phone == user.phone;
     });
 
     accounts.add(jsonEncode({
@@ -44,7 +45,23 @@ class StorageService {
   static Future<List<Map<String, dynamic>>> getSavedAccounts() async {
     final prefs = await SharedPreferences.getInstance();
     List<String> accounts = prefs.getStringList(_accountsKey) ?? [];
-    return accounts.map((acc) => jsonDecode(acc) as Map<String, dynamic>).toList();
+    
+    final List<Map<String, dynamic>> deduplicated = [];
+    final Set<String> seenPhones = {};
+    final Set<String> seenIds = {};
+
+    for (var accStr in accounts) {
+      final acc = jsonDecode(accStr) as Map<String, dynamic>;
+      final user = ChatUser.fromJson(acc['user']);
+      
+      if (!seenPhones.contains(user.phone) && !seenIds.contains(user.id)) {
+        seenPhones.add(user.phone);
+        seenIds.add(user.id);
+        deduplicated.add(acc);
+      }
+    }
+    
+    return deduplicated;
   }
 
   // Get token

@@ -11,6 +11,7 @@ import '../services/api_service.dart';
 
 import '../views/chat_screen.dart';
 import '../views/login_screen.dart';
+import '../views/signup_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -327,7 +328,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                             : null,
                         child: user.profilePic == null || user.profilePic!.isEmpty ? const Icon(Icons.person) : null,
                       ),
-                      title: Text(user.name),
+                      title: Text(user.name.trim().isNotEmpty ? user.name : user.phone),
                       trailing: isCurrent ? const Icon(Icons.check_circle, color: Colors.green) : null,
                       onTap: isCurrent ? null : () async {
                         Navigator.pop(context);
@@ -340,7 +341,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   ListTile(
                     leading: const Icon(Icons.add_circle_outline),
                     title: const Text('Add Account'),
-                    onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginScreen())); },
+                    onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const SignupScreen())); },
                   ),
                 ],
               ),
@@ -385,7 +386,18 @@ class _ChatListScreenState extends State<ChatListScreen> {
         content: const Text('This will delete all your data permanently.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          TextButton(onPressed: () async { Navigator.pop(context); await context.read<ChatProvider>().deleteAccount(); Navigator.pushNamedAndRemoveUntil(context, '/auth', (route) => false); }, child: const Text('Delete', style: TextStyle(color: Colors.red))),
+          TextButton(
+            onPressed: () async { 
+              Navigator.pop(context); 
+              final result = await context.read<ChatProvider>().deleteAccount(); 
+              if (result == 1 && context.mounted) {
+                Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
+              } else if (result == 2 && context.mounted) {
+                Navigator.pushNamedAndRemoveUntil(context, '/auth', (route) => false); 
+              }
+            }, 
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
         ],
       ),
     );

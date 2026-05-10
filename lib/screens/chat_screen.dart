@@ -143,7 +143,9 @@ class _ChatScreenState extends State<ChatScreen> {
                         child: MessageBubble(
                           message: message,
                           onReply: () => provider.setReplyTo(message),
-                          onDelete: (msg) => provider.deleteMessage(msg.id, true),
+                          onDelete: (msg, isEveryone) async {
+                            await provider.deleteMessage(msg.id, isEveryone);
+                          },
                         ),
                       );
                     },

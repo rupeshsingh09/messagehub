@@ -402,14 +402,18 @@ class ChatViewModel with ChangeNotifier {
   }
 
   Future<void> deleteMessage(String messageId, bool forEveryone) async {
-    final success = await _chatRepository.deleteMessage(messageId, forEveryone);
-    if (success) {
-      final index = _messages.indexWhere((m) => m.id == messageId);
-      if (index != -1) {
-        if (forEveryone) _messages[index] = _messages[index].copyWith(isDeleted: true, text: 'This message was deleted');
-        else _messages.removeAt(index);
-        notifyListeners();
+    if (forEveryone) {
+      final success = await _chatRepository.deleteMessage(messageId, true);
+      if (success) {
+        final index = _messages.indexWhere((m) => m.id == messageId);
+        if (index != -1) {
+          _messages[index] = _messages[index].copyWith(isDeleted: true, text: 'This message was deleted');
+          notifyListeners();
+        }
       }
+    } else {
+      _messages.removeWhere((m) => m.id == messageId);
+      notifyListeners();
     }
   }
 

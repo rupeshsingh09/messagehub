@@ -126,6 +126,7 @@ class SocketService {
   // 📩 RECEIVE MESSAGE
   // ===========================
   void onReceiveMessage(Function(Map<String, dynamic>) callback) {
+    _socket?.off('receive_message'); // Clear existing to prevent duplicates
     _socket?.on('receive_message', (data) {
       print('[Socket] 📩 receive_message: $data');
 
@@ -157,6 +158,9 @@ class SocketService {
     required Function(Map<String, dynamic>) onTyping,
     required Function(Map<String, dynamic>) onStopTyping,
   }) {
+    _socket?.off('typing');
+    _socket?.off('stop_typing');
+
     _socket?.on('typing', (data) {
       onTyping(Map<String, dynamic>.from(data));
     });
@@ -185,6 +189,7 @@ class SocketService {
   }
 
   void onMessageStatus(Function(Map<String, dynamic>) callback) {
+    _socket?.off('status_updated');
     _socket?.on('status_updated', (data) {
       callback(Map<String, dynamic>.from(data));
     });
@@ -194,6 +199,7 @@ class SocketService {
   // 🗑 DELETE MESSAGE
   // ===========================
   void onMessageDeleted(Function(Map<String, dynamic>) callback) {
+    _socket?.off('message_deleted');
     _socket?.on('message_deleted', (data) {
       callback(Map<String, dynamic>.from(data));
     });
@@ -212,6 +218,7 @@ class SocketService {
   // 🟢 USER STATUS (ONLINE/LAST SEEN)
   // ===========================
   void onUserStatus(Function(Map<String, dynamic>) callback) {
+    _socket?.off('user_status');
     _socket?.on('user_status', (data) {
       print('[Socket] 🟢 user_status: $data');
       callback(Map<String, dynamic>.from(data));
@@ -222,6 +229,7 @@ class SocketService {
   // 🧹 CLEANUP
   // ===========================
   void offChatEvents() {
+    print('[Socket] 🧹 Clearing all chat listeners');
     _socket?.off('receive_message');
     _socket?.off('typing');
     _socket?.off('stop_typing');

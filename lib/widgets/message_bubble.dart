@@ -11,7 +11,7 @@ import 'package:audioplayers/audioplayers.dart';
 class MessageBubble extends StatelessWidget {
   final Message message;
   final VoidCallback? onReply;
-  final Function(Message)? onDelete;
+  final Function(Message, bool)? onDelete;
 
   const MessageBubble({
     super.key, 
@@ -137,10 +137,13 @@ class MessageBubble extends StatelessWidget {
       icon = Icons.done_all;
     } else if (message.status == MessageStatus.seen) {
       icon = Icons.done_all;
-      color = const Color(0xFF53BDEB); // Blue check
+      color = const Color(0xFF53BDEB); // WhatsApp Blue check
     }
 
-    return Icon(icon, size: 14, color: color);
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Icon(icon, size: 16, color: color),
+    );
   }
 
   Widget _buildReplyPreview(BuildContext context, bool isDark) {
@@ -207,8 +210,11 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
-  Widget _buildAudioMessage(BuildContext context, bool isDark) {
-    return AudioBubble(audioUrl: ApiService.getImageUrl(message.audioUrl!));
+  Widget _buildAudioMessage(context, bool isDark) {
+    return AudioBubble(
+      audioUrl: ApiService.getImageUrl(message.audioUrl!),
+      isMe: message.isMe,
+    );
   }
 
   void _viewFullScreenImage(BuildContext context) {
@@ -231,36 +237,49 @@ class MessageBubble extends StatelessWidget {
   void _showOptions(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.reply),
-            title: const Text('Reply'),
-            onTap: () {
-              Navigator.pop(ctx);
-              if (onReply != null) onReply!();
-            },
-          ),
-          if (message.isMe && !message.isDeleted)
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red),
-              title: const Text('Delete for Everyone'),
+              leading: const Icon(Icons.reply, color: Color(0xFF00A884)),
+              title: const Text('Reply'),
               onTap: () {
                 Navigator.pop(ctx);
-                if (onDelete != null) onDelete!(message);
+                if (onReply != null) onReply!();
               },
             ),
-          if (!message.isDeleted)
-            ListTile(
-              leading: const Icon(Icons.delete_outline),
-              title: const Text('Delete for Me'),
-              onTap: () {
-                Navigator.pop(ctx);
-                // Handle local delete
-              },
-            ),
-        ],
+            if (!message.isDeleted) ...[
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.grey),
+                title: const Text('Delete for Me'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (onDelete != null) onDelete!(message, false);
+                  // Default in ChatScreen is forEveryone: true, 
+                  // but we should pass false here. 
+                  // Wait, ChatScreen's onDelete calls provider.deleteMessage(msg.id, true).
+                  // I should probably handle this in ChatScreen by passing the forEveryone flag.
+                },
+              ),
+              if (message.isMe)
+                ListTile(
+                  leading: const Icon(Icons.delete, color: Colors.red),
+                  title: const Text('Delete for Everyone'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    // This will be handled in ChatScreen's onDelete callback
+                    if (onDelete != null) onDelete!(message, true);
+                  },
+                ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -268,7 +287,8 @@ class MessageBubble extends StatelessWidget {
 
 class AudioBubble extends StatefulWidget {
   final String audioUrl;
-  const AudioBubble({super.key, required this.audioUrl});
+  final bool isMe;
+  const AudioBubble({super.key, required this.audioUrl, required this.isMe});
 
   @override
   State<AudioBubble> createState() => _AudioBubbleState();
@@ -284,9 +304,15 @@ class _AudioBubbleState extends State<AudioBubble> {
   void initState() {
     super.initState();
     _player = AudioPlayer();
-    _player.onDurationChanged.listen((d) => setState(() => _duration = d));
-    _player.onPositionChanged.listen((p) => setState(() => _position = p));
-    _player.onPlayerComplete.listen((_) => setState(() => _isPlaying = false));
+    _player.onDurationChanged.listen((d) {
+      if (mounted) setState(() => _duration = d);
+    });
+    _player.onPositionChanged.listen((p) {
+      if (mounted) setState(() => _position = p);
+    });
+    _player.onPlayerComplete.listen((_) {
+      if (mounted) setState(() => _isPlaying = false);
+    });
   }
 
   @override
@@ -297,33 +323,98 @@ class _AudioBubbleState extends State<AudioBubble> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    final theme = Theme.of(context);
+    final accentColor = widget.isMe ? Colors.white : const Color(0xFF00A884);
+    final iconColor = widget.isMe ? Colors.white70 : Colors.grey;
+
+    return Container(
+      width: MediaQuery.of(context).size.width * 0.65,
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          IconButton(
-            icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
-            onPressed: () async {
+          const SizedBox(width: 4),
+          GestureDetector(
+            onTap: () async {
               if (_isPlaying) {
                 await _player.pause();
               } else {
                 await _player.play(UrlSource(widget.audioUrl));
               }
-              setState(() => _isPlaying = !_isPlaying);
+              if (mounted) setState(() => _isPlaying = !_isPlaying);
             },
-          ),
-          Expanded(
-            child: Slider(
-              value: _position.inSeconds.toDouble(),
-              max: _duration.inSeconds.toDouble() > 0 ? _duration.inSeconds.toDouble() : 1.0,
-              onChanged: (v) => _player.seek(Duration(seconds: v.toInt())),
-              activeColor: Colors.green,
+            child: CircleAvatar(
+              radius: 22,
+              backgroundColor: widget.isMe ? Colors.black12 : const Color(0xFF00A884).withOpacity(0.1),
+              child: Icon(
+                _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                color: widget.isMe ? Colors.white : const Color(0xFF00A884),
+                size: 30,
+              ),
             ),
           ),
-          Text(
-            _formatDuration(_duration - _position),
-            style: const TextStyle(fontSize: 12),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                    trackHeight: 3,
+                    activeTrackColor: widget.isMe ? Colors.white : const Color(0xFF00A884),
+                    inactiveTrackColor: widget.isMe ? Colors.white30 : Colors.grey.withOpacity(0.3),
+                    thumbColor: widget.isMe ? Colors.white : const Color(0xFF00A884),
+                    overlayColor: (widget.isMe ? Colors.white : const Color(0xFF00A884)).withOpacity(0.2),
+                  ),
+                  child: Slider(
+                    value: _position.inSeconds.toDouble(),
+                    max: _duration.inSeconds.toDouble() > 0 ? _duration.inSeconds.toDouble() : 1.0,
+                    onChanged: (v) => _player.seek(Duration(seconds: v.toInt())),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _formatDuration(_position),
+                        style: TextStyle(fontSize: 11, color: widget.isMe ? Colors.white70 : Colors.grey[600]),
+                      ),
+                      Text(
+                        _formatDuration(_duration),
+                        style: TextStyle(fontSize: 11, color: widget.isMe ? Colors.white70 : Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Stack(
+            alignment: Alignment.bottomRight,
+            children: [
+              Container(
+                margin: const EdgeInsets.only(right: 8, left: 4),
+                child: CircleAvatar(
+                  radius: 18,
+                  backgroundColor: widget.isMe ? Colors.white24 : Colors.grey[200],
+                  child: Icon(
+                    Icons.person,
+                    color: widget.isMe ? Colors.white : Colors.grey[400],
+                    size: 20,
+                  ),
+                ),
+              ),
+              const Positioned(
+                bottom: 0,
+                right: 6,
+                child: Icon(
+                  Icons.mic,
+                  color: Color(0xFF00A884),
+                  size: 14,
+                ),
+              ),
+            ],
           ),
         ],
       ),

@@ -78,16 +78,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _startRecording() async {
-    await chatProvider.audioService.startRecording();
-    setState(() {});
+    debugPrint('[UI] 🎤 _startRecording triggered');
+    await chatProvider.startRecording();
   }
 
   void _stopRecording() async {
-    final path = await chatProvider.audioService.stopRecording();
+    debugPrint('[UI] 🛑 _stopRecording triggered');
+    final path = await chatProvider.stopRecording();
+    debugPrint('[UI] 📍 _stopRecording path: $path');
     if (path != null) {
       await chatProvider.sendVoiceMessage(widget.user.id, path);
     }
-    setState(() {});
   }
 
   void _onTyping(String val) {
@@ -140,7 +141,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         child: MessageBubble(
                           message: message,
                           onReply: () => provider.setReplyTo(message),
-                          onDelete: (msg) => provider.deleteMessage(msg.id, true),
+                          onDelete: (msg, forEveryone) { provider.deleteMessage(msg.id, forEveryone); },
                         ),
                       );
                     },
@@ -205,6 +206,22 @@ class _ChatScreenState extends State<ChatScreen> {
         },
       ),
       actions: [
+        IconButton(
+          icon: const Icon(Icons.videocam),
+          onPressed: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Video calling coming soon')),
+            );
+          },
+        ),
+        IconButton(
+          icon: const Icon(Icons.call),
+          onPressed: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Voice calling coming soon')),
+            );
+          },
+        ),
         IconButton(icon: const Icon(Icons.search), onPressed: () => setState(() => _isSearching = true)),
         PopupMenuButton<String>(
           onSelected: (value) {
@@ -270,67 +287,97 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildInputArea() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                borderRadius: BorderRadius.circular(25),
-              ),
-              child: Row(
-                children: [
-                  const SizedBox(width: 8),
-                  const Icon(Icons.emoji_emotions_outlined, color: Colors.grey),
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      maxLines: 5,
-                      minLines: 1,
-                      onChanged: _onTyping,
-                      decoration: const InputDecoration(
-                        hintText: 'Message',
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 10),
+    return Consumer<ChatProvider>(
+      builder: (context, provider, _) {
+        return Container(
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
+          child: Row(
+            children: [
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).cardColor,
+                    borderRadius: BorderRadius.circular(25),
+                  ),
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 8),
+                      const Icon(Icons.emoji_emotions_outlined, color: Colors.grey),
+                      Expanded(
+                        child: provider.isRecording
+                            ? Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.mic, color: Colors.red, size: 16),
+                                    const SizedBox(width: 8),
+                                    const Text('Recording...',
+                                        style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                                    const Spacer(),
+                                    TweenAnimationBuilder<double>(
+                                      tween: Tween(begin: 0.0, end: 1.0),
+                                      duration: const Duration(seconds: 1),
+                                      builder: (context, value, child) =>
+                                          Opacity(opacity: value, child: const Text('Release to send')),
+                                      onEnd: () {},
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : TextField(
+                                controller: _messageController,
+                                maxLines: 5,
+                                minLines: 1,
+                                onChanged: _onTyping,
+                                decoration: const InputDecoration(
+                                  hintText: 'Message',
+                                  border: InputBorder.none,
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 10),
+                                ),
+                              ),
                       ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.camera_alt, color: Colors.grey),
-                    onPressed: () => _pickImage(ImageSource.camera),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.attach_file, color: Colors.grey),
-                    onPressed: () => _pickImage(ImageSource.gallery),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          ValueListenableBuilder<TextEditingValue>(
-            valueListenable: _messageController,
-            builder: (context, value, _) {
-              final isNotEmpty = value.text.trim().isNotEmpty;
-              return GestureDetector(
-                onLongPress: !isNotEmpty ? _startRecording : null,
-                onLongPressUp: !isNotEmpty ? _stopRecording : null,
-                onTap: isNotEmpty ? _sendMessage : null,
-                child: CircleAvatar(
-                  radius: 25,
-                  backgroundColor: const Color(0xFF00A884),
-                  child: Icon(
-                    isNotEmpty ? Icons.send : (chatProvider.audioService.isRecording ? Icons.stop : Icons.mic),
-                    color: Colors.white,
+                      if (!provider.isRecording) ...[
+                        IconButton(
+                          icon: const Icon(Icons.camera_alt, color: Colors.grey),
+                          onPressed: () => _pickImage(ImageSource.camera),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.attach_file, color: Colors.grey),
+                          onPressed: () => _pickImage(ImageSource.gallery),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
-              );
-            },
+              ),
+              const SizedBox(width: 8),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _messageController,
+                builder: (context, value, _) {
+                  final isNotEmpty = value.text.trim().isNotEmpty;
+                  return GestureDetector(
+                    key: const ValueKey('mic_gesture_detector'),
+                    onLongPressStart: !isNotEmpty ? (_) => _startRecording() : null,
+                    onLongPressEnd: !isNotEmpty ? (_) => _stopRecording() : null,
+                    onLongPressCancel: !isNotEmpty ? () => _stopRecording() : null,
+                    onTap: isNotEmpty && !provider.isSendingMessage ? _sendMessage : null,
+                    child: CircleAvatar(
+                      radius: 25,
+                      backgroundColor: isNotEmpty && provider.isSendingMessage 
+                          ? Colors.grey 
+                          : const Color(0xFF00A884),
+                      child: Icon(
+                        isNotEmpty ? Icons.send : (provider.isRecording ? Icons.stop : Icons.mic),
+                        color: Colors.white,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 

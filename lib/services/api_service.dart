@@ -14,19 +14,31 @@ class ApiService {
   static String getImageUrl(String? path) => AppConfig.getImageUrl(path);
 
   // 🔍 Debug logger
+  static void _logRequest(String method, String url, {Map<String, String>? headers, dynamic body}) {
+    print('--- [ApiService] REQUEST ---');
+    print('Method: $method');
+    print('URL: $url');
+    if (headers != null) print('Headers: $headers');
+    if (body != null) print('Body: $body');
+    print('---------------------------');
+  }
+
   static void _logResponse(http.Response response, String methodName) {
-    print('--- [ApiService] $methodName ---');
+    print('--- [ApiService] RESPONSE ($methodName) ---');
     print('URL: ${response.request?.url}');
     print('Status: ${response.statusCode}');
     print('Body: ${response.body}');
+    print('---------------------------');
   }
 
   /// Extracts error message from backend JSON response
   static String _extractError(http.Response response, String fallback) {
     try {
+      if (response.body.isEmpty) return fallback;
       final body = jsonDecode(response.body);
-      return body['message'] ?? body['error'] ?? fallback;
-    } catch (_) {
+      return body['message'] ?? body['error'] ?? body['msg'] ?? fallback;
+    } catch (e) {
+      print('[ApiService] Error parsing error response: $e');
       return fallback;
     }
   }
@@ -36,6 +48,7 @@ class ApiService {
     final token = await StorageService.getToken();
     return {
       'Content-Type': 'application/json',
+      'Accept': 'application/json',
       if (token != null) 'Authorization': 'Bearer $token',
     };
   }
@@ -46,12 +59,17 @@ class ApiService {
 
   /// POST /api/users/send-otp — sends OTP to phone
   static Future<Map<String, dynamic>> sendOtp(String phone) async {
+    final url = '$baseUrl/api/users/send-otp';
+    final body = jsonEncode({'phone': phone});
+    
     try {
+      _logRequest('POST', url, body: body);
+      
       final response = await http.post(
-        Uri.parse('$baseUrl/api/users/send-otp'),
+        Uri.parse(url),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'phone': phone}),
-      );
+        body: body,
+      ).timeout(const Duration(seconds: 60));
 
       _logResponse(response, 'sendOtp');
 
@@ -60,27 +78,38 @@ class ApiService {
         'success': success,
         'message': success
             ? 'OTP sent successfully'
-            : _extractError(response, 'Failed to send OTP. Please try again.'),
+            : _extractError(response, 'Failed to send OTP (Status: ${response.statusCode})'),
       };
     } catch (e) {
-      print('Error sending OTP: $e');
-      return {'success': false, 'message': 'Network error. Check connection.'};
+      print('[ApiService] sendOtp Exception: $e');
+      String errorMsg = 'Network error. Please check your internet connection.';
+      if (e.toString().contains('SocketException')) {
+        errorMsg = 'Could not connect to server. Ensure you have internet and the backend is running.';
+      } else if (e.toString().contains('TimeoutException')) {
+        errorMsg = 'Connection timed out. Render backend might be sleeping, please try again in a moment.';
+      }
+      return {'success': false, 'message': errorMsg};
     }
   }
 
   /// POST /api/users/verify-otp — verifies OTP and returns user/token
   static Future<Map<String, dynamic>> verifyOtp(
       String phone, String otp, String firstName) async {
+    final url = '$baseUrl/api/users/verify-otp';
+    final body = jsonEncode({
+      'phone': phone,
+      'otp': otp,
+      'firstName': firstName,
+    });
+
     try {
+      _logRequest('POST', url, body: body);
+
       final response = await http.post(
-        Uri.parse('$baseUrl/api/users/verify-otp'),
+        Uri.parse(url),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'phone': phone,
-          'otp': otp,
-          'firstName': firstName,
-        }),
-      );
+        body: body,
+      ).timeout(const Duration(seconds: 60));
 
       _logResponse(response, 'verifyOtp');
 
@@ -99,8 +128,11 @@ class ApiService {
         'message': _extractError(response, 'Invalid OTP. Please try again.'),
       };
     } catch (e) {
-      print('Error verifying OTP: $e');
-      return {'success': false, 'message': 'Network error. Check connection.'};
+      print('[ApiService] verifyOtp Exception: $e');
+      return {
+        'success': false, 
+        'message': 'Network error. Check connection and try again.'
+      };
     }
   }
 
@@ -110,12 +142,15 @@ class ApiService {
 
   // Get all users
   static Future<List<dynamic>> getUsers() async {
+    final url = '$baseUrl/api/users';
     try {
       final headers = await _getAuthHeaders();
+      _logRequest('GET', url, headers: headers);
+      
       final response = await http.get(
-        Uri.parse('$baseUrl/api/users'),
+        Uri.parse(url),
         headers: headers,
-      );
+      ).timeout(const Duration(seconds: 15));
 
       _logResponse(response, 'getUsers');
 
@@ -143,13 +178,17 @@ class ApiService {
   // Match contacts (WhatsApp-like)
   static Future<List<dynamic>> matchContacts(
       List<String> phoneNumbers) async {
+    final url = '$baseUrl/api/users/match-contacts';
+    final body = jsonEncode({'phoneNumbers': phoneNumbers});
     try {
       final headers = await _getAuthHeaders();
+      _logRequest('POST', url, headers: headers, body: body);
+
       final response = await http.post(
-        Uri.parse('$baseUrl/api/users/match-contacts'),
+        Uri.parse(url),
         headers: headers,
-        body: jsonEncode({'phoneNumbers': phoneNumbers}),
-      );
+        body: body,
+      ).timeout(const Duration(seconds: 20));
 
       _logResponse(response, 'matchContacts');
 
@@ -190,23 +229,27 @@ class ApiService {
     String? replyText,
     String? replyType,
   }) async {
+    final url = '$baseUrl/api/messages/send';
+    final bodyData = {
+      'sender': sender,
+      'receiver': receiver,
+      'message': message,
+      'imageUrl': imageUrl,
+      'audioUrl': audioUrl,
+      'type': type ?? 'text',
+      'replyToId': replyToId,
+      'replyText': replyText,
+      'replyType': replyType,
+    };
     try {
       final headers = await _getAuthHeaders();
+      _logRequest('POST', url, headers: headers, body: bodyData);
+
       final response = await http.post(
-        Uri.parse('$baseUrl/api/messages/send'),
+        Uri.parse(url),
         headers: headers,
-        body: jsonEncode({
-          'sender': sender,
-          'receiver': receiver,
-          'message': message,
-          'imageUrl': imageUrl,
-          'audioUrl': audioUrl,
-          'type': type ?? 'text',
-          'replyToId': replyToId,
-          'replyText': replyText,
-          'replyType': replyType,
-        }),
-      );
+        body: jsonEncode(bodyData),
+      ).timeout(const Duration(seconds: 15));
 
       _logResponse(response, 'sendMessage');
 
@@ -215,26 +258,30 @@ class ApiService {
       }
       return null;
     } catch (e) {
-      print('Error sending message: $e');
+      print('[ApiService] Error sending message: $e');
       return null;
     }
   }
 
   // Delete Message
   static Future<bool> deleteMessage(String messageId, bool forEveryone) async {
+    final url = '$baseUrl/api/messages/delete/$messageId';
+    final body = jsonEncode({'forEveryone': forEveryone});
     try {
       final headers = await _getAuthHeaders();
+      _logRequest('DELETE', url, headers: headers, body: body);
+
       final response = await http.delete(
-        Uri.parse('$baseUrl/api/messages/delete/$messageId'),
+        Uri.parse(url),
         headers: headers,
-        body: jsonEncode({'forEveryone': forEveryone}),
-      );
+        body: body,
+      ).timeout(const Duration(seconds: 10));
 
       _logResponse(response, 'deleteMessage');
 
       return response.statusCode == 200;
     } catch (e) {
-      print('Error deleting message: $e');
+      print('[ApiService] Error deleting message: $e');
       return false;
     }
   }
@@ -244,12 +291,15 @@ class ApiService {
       String sender,
       String receiver,
       ) async {
+    final url = '$baseUrl/api/messages/$sender/$receiver';
     try {
       final headers = await _getAuthHeaders();
+      _logRequest('GET', url, headers: headers);
+
       final response = await http.get(
-        Uri.parse('$baseUrl/api/messages/$sender/$receiver'),
+        Uri.parse(url),
         headers: headers,
-      );
+      ).timeout(const Duration(seconds: 60));
 
       _logResponse(response, 'getMessages');
 
@@ -280,66 +330,78 @@ class ApiService {
 
   // Clear Chat History
   static Future<bool> clearChat(String otherUserId) async {
+    final url = '$baseUrl/api/messages/clear/$otherUserId';
     try {
       final headers = await _getAuthHeaders();
+      _logRequest('DELETE', url, headers: headers);
+
       final response = await http.delete(
-        Uri.parse('$baseUrl/api/messages/clear/$otherUserId'),
+        Uri.parse(url),
         headers: headers,
-      );
+      ).timeout(const Duration(seconds: 10));
 
       _logResponse(response, 'clearChat');
 
       return response.statusCode == 200;
     } catch (e) {
-      print('Error clearing chat: $e');
+      print('[ApiService] Error clearing chat: $e');
       return false;
     }
   }
 
   // Clear All Chats
   static Future<bool> clearAllChats() async {
+    final url = '$baseUrl/api/chats/clear';
     try {
       final headers = await _getAuthHeaders();
+      _logRequest('DELETE', url, headers: headers);
+
       final response = await http.delete(
-        Uri.parse('$baseUrl/api/chats/clear'),
+        Uri.parse(url),
         headers: headers,
-      );
+      ).timeout(const Duration(seconds: 10));
 
       _logResponse(response, 'clearAllChats');
 
       return response.statusCode == 200;
     } catch (e) {
-      print('Error clearing all chats: $e');
+      print('[ApiService] Error clearing all chats: $e');
       return false;
     }
   }
 
   // Delete Account
   static Future<bool> deleteAccount() async {
+    final url = '$baseUrl/api/users/delete-account';
     try {
       final headers = await _getAuthHeaders();
+      _logRequest('DELETE', url, headers: headers);
+
       final response = await http.delete(
-        Uri.parse('$baseUrl/api/users/delete-account'),
+        Uri.parse(url),
         headers: headers,
-      );
+      ).timeout(const Duration(seconds: 10));
 
       _logResponse(response, 'deleteAccount');
 
       return response.statusCode == 200;
     } catch (e) {
-      print('Error deleting account: $e');
+      print('[ApiService] Error deleting account: $e');
       return false;
     }
   }
 
   // Get User Details (for status/last seen)
   static Future<Map<String, dynamic>?> getUserDetails(String userId) async {
+    final url = '$baseUrl/api/users/details/$userId';
     try {
       final headers = await _getAuthHeaders();
+      _logRequest('GET', url, headers: headers);
+
       final response = await http.get(
-        Uri.parse('$baseUrl/api/users/details/$userId'),
+        Uri.parse(url),
         headers: headers,
-      );
+      ).timeout(const Duration(seconds: 10));
 
       _logResponse(response, 'getUserDetails');
 
@@ -348,7 +410,7 @@ class ApiService {
       }
       return null;
     } catch (e) {
-      print('Error getting user details: $e');
+      print('[ApiService] Error getting user details: $e');
       return null;
     }
   }
@@ -358,22 +420,26 @@ class ApiService {
   // ===========================
 
   static Future<bool> updateFcmToken(String userId, String token) async {
+    final url = '$baseUrl/api/users/update-fcm';
+    final body = jsonEncode({
+      'userId': userId,
+      'fcmToken': token,
+    });
     try {
       final headers = await _getAuthHeaders();
+      _logRequest('POST', url, headers: headers, body: body);
+
       final response = await http.post(
-        Uri.parse('$baseUrl/api/users/update-fcm'),
+        Uri.parse(url),
         headers: headers,
-        body: jsonEncode({
-          'userId': userId,
-          'fcmToken': token,
-        }),
-      );
+        body: body,
+      ).timeout(const Duration(seconds: 10));
 
       _logResponse(response, 'updateFcmToken');
 
       return response.statusCode == 200;
     } catch (e) {
-      print('Error updating FCM token: $e');
+      print('[ApiService] Error updating FCM token: $e');
       return false;
     }
   }
@@ -383,12 +449,10 @@ class ApiService {
   // ===========================
 
   static Future<Map<String, dynamic>> updateProfilePic(String filePath) async {
+    final url = '$baseUrl/api/users/profile-photo';
     try {
       final token = await StorageService.getToken();
-      var request = http.MultipartRequest(
-        'PUT',
-        Uri.parse('$baseUrl/api/users/profile-photo'),
-      );
+      var request = http.MultipartRequest('PUT', Uri.parse(url));
 
       if (token != null) {
         request.headers['Authorization'] = 'Bearer $token';
@@ -401,7 +465,9 @@ class ApiService {
         ),
       );
 
-      final streamedResponse = await request.send();
+      _logRequest('PUT (Multipart)', url, headers: request.headers, body: 'File: $filePath');
+
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
       final response = await http.Response.fromStream(streamedResponse);
 
       _logResponse(response, 'updateProfilePic');
@@ -419,53 +485,58 @@ class ApiService {
         'message': _extractError(response, 'Failed to upload photo')
       };
     } catch (e) {
-      print('Error updating profile pic: $e');
+      print('[ApiService] Error updating profile pic: $e');
       return {'success': false, 'message': 'Network error during upload'};
     }
   }
 
   static Future<bool> removeProfilePic() async {
+    final url = '$baseUrl/api/users/profile-photo';
     try {
       final headers = await _getAuthHeaders();
+      _logRequest('DELETE', url, headers: headers);
+
       final response = await http.delete(
-        Uri.parse('$baseUrl/api/users/profile-photo'),
+        Uri.parse(url),
         headers: headers,
-      );
+      ).timeout(const Duration(seconds: 10));
 
       _logResponse(response, 'removeProfilePic');
 
       return response.statusCode == 200;
     } catch (e) {
-      print('Error removing profile pic: $e');
+      print('[ApiService] Error removing profile pic: $e');
       return false;
     }
   }
 
   static Future<bool> updateBio(String bio) async {
+    final url = '$baseUrl/api/users/update-bio';
+    final body = jsonEncode({'bio': bio});
     try {
       final headers = await _getAuthHeaders();
+      _logRequest('PUT', url, headers: headers, body: body);
+
       final response = await http.put(
-        Uri.parse('$baseUrl/api/users/update-bio'),
+        Uri.parse(url),
         headers: headers,
-        body: jsonEncode({'bio': bio}),
-      );
+        body: body,
+      ).timeout(const Duration(seconds: 10));
 
       _logResponse(response, 'updateBio');
 
       return response.statusCode == 200;
     } catch (e) {
-      print('Error updating bio: $e');
+      print('[ApiService] Error updating bio: $e');
       return false;
     }
   }
 
   static Future<Map<String, dynamic>> uploadFile(String filePath, String type) async {
+    final url = '$baseUrl/api/messages/upload';
     try {
       final token = await StorageService.getToken();
-      var request = http.MultipartRequest(
-        'POST',
-        Uri.parse('$baseUrl/api/messages/upload'),
-      );
+      var request = http.MultipartRequest('POST', Uri.parse(url));
 
       if (token != null) {
         request.headers['Authorization'] = 'Bearer $token';
@@ -479,7 +550,9 @@ class ApiService {
       );
       request.fields['type'] = type;
 
-      final streamedResponse = await request.send();
+      _logRequest('POST (Multipart)', url, headers: request.headers, body: 'File: $filePath, Type: $type');
+
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 60));
       final response = await http.Response.fromStream(streamedResponse);
 
       _logResponse(response, 'uploadFile ($type)');
@@ -496,7 +569,7 @@ class ApiService {
         'message': _extractError(response, 'Failed to upload $type')
       };
     } catch (e) {
-      print('Error uploading $type: $e');
+      print('[ApiService] Error uploading $type: $e');
       return {'success': false, 'message': 'Network error during upload'};
     }
   }
