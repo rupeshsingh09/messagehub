@@ -192,4 +192,5 @@ flutter run
 * 📁 Media Sharing
 * 🌙 Dark Mode Improvements
 
--
+## 📥 Download App
+[Click here to download APK](https://github.com/rupeshsingh09/messagehub/releases/download/v1.0/app-release.apk)
